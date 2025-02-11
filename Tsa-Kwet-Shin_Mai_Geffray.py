@@ -44,7 +44,7 @@ def plot_convergence(iterations, optimality_gap, algorithm_name):
     plt.ylabel("Optimality Gap (||alpha_t - alpha*||)")
     plt.title(f"Convergence de {algorithm_name}")
     plt.grid(True)
-    plt.savefig(f"convergence_{algorithm_name}.pdf")
+    plt.savefig(f"results/convergence/convergence_{algorithm_name}.pdf")
     plt.show()
 
 def visualize_function(x_prime, alpha, X_m_points, algorithm_name):
@@ -63,7 +63,7 @@ def visualize_function(x_prime, alpha, X_m_points, algorithm_name):
     plt.ylabel("f(x)")
     plt.legend()
     plt.grid(True)
-    plt.savefig(f"fonction_apprise_{algorithm_name}.pdf")
+    plt.savefig(f"results/learned_function/learned_fonction_{algorithm_name}.pdf")
     plt.show()
 
 # --- Fonctions pour les Algorithmes Distribués ---
@@ -98,6 +98,7 @@ def decentralized_gradient_descent(agents_data_indices, agents_x_data, agents_y_
         avg_alpha = np.mean(agent_alphas, axis=0)
         optimality_gap = np.linalg.norm(avg_alpha - alpha_star_centralized)
         optimality_gap_history_dgd.append(optimality_gap)
+        #print(f"DGD - Iteration {iteration+1}/{num_iterations}, Optimality Gap: {optimality_gap:.6f}")
 
     return agent_alphas, optimality_gap_history_dgd
 
@@ -348,8 +349,8 @@ if __name__ == "__main__":
     print("--- Partie 1: Méthodes Distribuées Classiques (DGD, GT, DD, ADMM) ---")
 
     # 1. Charger les données
-    data_part1 = load_data('first_database.pkl')
-    x_data, y_data = data_part1['x'], data_part1['y']
+    data_part1 = load_data('data/first_database.pkl')
+    x_data, y_data = data_part1[0], data_part1[1]
 
     # 2. Choisir n, m, a et diviser les données
     n_total = 100
@@ -440,7 +441,7 @@ if __name__ == "__main__":
 
     # --- Partie 2: Federated Averaging (FedAvg) ---
     print("--- Partie 2: Federated Averaging (FedAvg) ---")
-    data_part2 = load_data('second_database.pkl')
+    data_part2 = load_data('data/second_database.pkl')
     agents_X_part2, agents_Y_part2 = data_part2['X'], data_part2['Y'] # Données déjà divisées par agent
 
     n_total_part2 = 100 # Total points (même si déjà divisées, pour m_nystrom)
