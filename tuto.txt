@@ -1,0 +1,75 @@
+Processus pas à pas détaillé :
+
+Étape 1 : Préparation et Exécution Initiale
+
+Enregistrer le code : Copie le code Python complet ci-dessus et enregistre-le dans un fichier nommé, par exemple, NomDeFamille1_NomDeFamille2_NomDeFamille3_Final.py. Assure-toi d'avoir les fichiers de données first_database.pkl et second_database.pkl dans le même répertoire que ton script Python.
+Installer les librairies nécessaires : Si tu ne les as pas déjà, installe les librairies numpy, matplotlib, pickle, et networkx. Tu peux utiliser pip install numpy matplotlib pickle networkx dans ton terminal.
+Exécuter le script pour la première fois : Lance le script Python. Il devrait s'exécuter sans erreur et générer plusieurs graphiques de convergence (convergence_*.pdf) et de fonctions apprises (fonction_apprise_*.pdf) pour DGD, GT, DD, ADMM, FedAvg et DGD-DP, ainsi que un graphique d'erreur objective pour FedAvg (convergence_FedAvg_ObjectiveError.pdf).
+Vérifier les graphiques initiaux : Ouvre les fichiers PDF des graphiques. Vérifie si les graphiques de convergence montrent une décroissance (l'optimality gap ou l'erreur objective devraient diminuer avec les itérations/rounds). Regarde les formes des fonctions apprises visualisées. Cette première exécution te permet de valider que le code de base fonctionne.
+Étape 2 : Expérimentations et Analyses Détachées (Partie par Partie)
+
+Maintenant, tu vas reprendre chaque partie du projet et faire les expérimentations demandées, un algorithme à la fois.
+
+Partie 1 : Méthodes Distribuées Classiques (DGD, GT, DD, ADMM)
+
+DGD et GT (Analyse comparative initiale) :
+
+Compare les graphiques de convergence de DGD et GT. Lequel converge plus rapidement ? Lequel atteint un optimality gap plus faible après un nombre d'itérations donné ? Varie légèrement le step_size pour DGD et GT pour voir comment cela affecte la convergence.
+Justifie tes observations en te référant à la théorie de DGD et GT. Pourquoi GT est-il supposé converger mieux que DGD ?
+Structure du Graphe de Communication :
+
+Graphe Ligne : C'est le graphe par défaut (en anneau ici, mais pour 5 agents, c'est similaire à une ligne pour la connectivité). Observe la convergence avec ce graphe (déjà fait lors de l'exécution initiale).
+Graphe Petit Monde : Crée un graphe de petit monde avec networkx (par exemple, nx.watts_strogatz_graph(num_agents, k=2, p=0.5)). Remplace communication_graph_dgd, communication_graph_gt, communication_graph_dd, communication_graph_admm par ce graphe de petit monde. Réexécute la Partie 1 et compare la convergence avec le graphe ligne. Comment la structure "petit monde" affecte-t-elle la convergence par rapport à un graphe ligne ?
+Graphe Complètement Connecté : Crée un graphe complètement connecté (nx.complete_graph(num_agents)). Fais de même et compare la convergence. Un graphe plus dense accélère-t-il la convergence ? Pourquoi théoriquement ?
+Documente : Pour chaque type de graphe, enregistre les graphiques de convergence et note tes observations et justifications théoriques pour le rapport.
+Perturbations (Optionnel dans l'énoncé, mais intéressant) :
+
+Communication Dirigée : Modifie les graphes de communication pour les rendre dirigés (par exemple, en utilisant nx.DiGraph et en définissant des arêtes directionnelles). Observe si cela "casse" la convergence de DGD et GT. Justifie théoriquement pourquoi la communication non-dirigée est souvent une condition pour la convergence de ces algorithmes.
+Pertes de Paquets/Asynchronisme : C'est plus complexe à simuler. Tu pourrais introduire aléatoirement des "pertes" de communication (par exemple, en ne mettant à jour les alpha voisins qu'avec une certaine probabilité à chaque itération) ou simuler un asynchronisme (en mettant à jour les agents dans un ordre aléatoire et non simultanément). Observe l'impact sur la convergence.
+DD et ADMM (Analyse et Paramètres) :
+
+DD et ADMM vs. DGD et GT : Compare les convergences de DD et ADMM avec DGD et GT. Les méthodes basées sur la décomposition (DD et ADMM) convergent-elles plus rapidement ou plus lentement dans ce cas ? Atteignent-elles un optimality gap final différent ?
+Paramètre rho (DD et ADMM) : Varie le paramètre rho_dd pour DD et rho_admm pour ADMM (par exemple, teste rho = 0.01, 0.1, 1, 10). Observe l'impact de rho sur la convergence. Comment le choix de rho influence-t-il le compromis entre consensus et minimisation locale dans DD et ADMM ? Justifie théoriquement. Choisis une valeur "raisonnable" de rho pour DD et ADMM pour la suite des expérimentations.
+Step Sizes pour DD : Varie step_size_primal_dd et step_size_dual_dd pour DD. Observe l'impact sur la convergence. Trouve des valeurs qui donnent une convergence stable et rapide.
+Variation de n et m :
+
+Augmente n : Teste avec n = 1000, n = 10000, etc. Maintiens m ≈ √n (par exemple, m = 32 pour n = 1000, m = 100 pour n = 10000). Augmente éventuellement le nombre d'agents a si nécessaire (par exemple, a = 10 pour n = 1000, a = 20 ou 50 pour n = 10000). Réexécute la Partie 1 avec ces valeurs plus grandes de n et m.
+Convergence avec grand n : Observe comment la convergence de DGD, GT, DD, ADMM change lorsque n augmente. Est-ce que l'optimality gap final est affecté ? La vitesse de convergence change-t-elle ? Dans ce cas de grand n, le calcul de la solution centralisée peut devenir très coûteux (voire impossible). Si c'est le cas, tu ne pourras plus calculer l'"optimality gap" par rapport à alpha_star_centralized. Dans ce cas, pour jauger la convergence, tu peux tracer d'autres métriques, comme la variance des alpha entre les agents au cours des itérations (si la variance diminue, cela indique un consensus) ou la norme du gradient moyen.
+Partie 2 : Federated Averaging (FedAvg)
+
+Paramètres FedAvg :
+
+Nombre d'Epochs Locales (epochs_per_round_fedavg) : Teste epochs_per_round_fedavg = 1, 5, 50 (comme suggéré dans l'énoncé). Observe l'impact sur la convergence de l'erreur objective globale. Plus d'epochs locales accélèrent-elles ou ralentissent-elles la convergence globale ? Quel est le compromis ?
+Taille des Batches (batch_size_fedavg) : Varie batch_size_fedavg (par exemple, teste batch_size_fedavg = 10, 20, len(agents_X_part2[0]) (batch complet)). Mini-batch vs. batch complet : quel impact sur la convergence ?
+Taux d'Apprentissage (learning_rate_fedavg) : Teste différentes valeurs de learning_rate_fedavg (par exemple, 0.001, 0.01, 0.1). Trouve un taux d'apprentissage qui donne une bonne convergence. Teste aussi un taux d'apprentissage diminuant au cours des rounds (par exemple, learning_rate_fedavg = initial_learning_rate / (1 + round_num)). Un taux diminuant améliore-t-il la convergence dans ce cas ?
+Clients Sélectionnés (Optionnel) : Si tu veux aller plus loin, tu peux modifier federated_averaging pour sélectionner un sous-ensemble aléatoire de clients à chaque round (au lieu de tous les clients). Varie le nombre de clients sélectionnés. Quel impact sur la convergence ? Cela simule des scénarios où tous les appareils ne sont pas disponibles à chaque round.
+Documente : Pour chaque paramètre varié, enregistre les graphiques de convergence de l'erreur objective et note tes observations et justifications théoriques pour le rapport.
+Données Non-IID et SCAFFOLD (Optionnel) :  Si tu veux faire l'option SCAFFOLD, il faudrait modifier les données de second_database.pkl pour les rendre non-IID (par exemple, en faisant en sorte que chaque agent ait des données provenant d'une distribution légèrement différente).  Ensuite, implémente l'algorithme SCAFFOLD (ce qui est plus complexe et demande une étude théorique approfondie de SCAFFOLD) et compare la convergence de FedAvg et SCAFFOLD sur ces données non-IID.
+
+Partie 3 : DGD-DP (Descente de Gradient Décentralisée avec Privacité Différentielle)
+
+Paramètre epsilon et Bruit :
+Valeurs de epsilon : Teste noise_std_dp correspondant à epsilon = 0.1, 1, 10 (en utilisant les formules de l'article [arXiv:2202.01113] pour le calibrage du bruit gaussien - c'est la partie la plus délicate : il faudra peut-être simplifier le calibrage pour ce projet spécifique ou utiliser des valeurs de noise_std_dp qui donnent des résultats visuellement intéressants et commenter l'approche de calibrage dans le rapport). Pour commencer, tu peux tester empiriquement des valeurs de noise_std_dp = 0.01, 0.1, 1 pour voir l'effet du bruit.
+Convergence vs. Privacité : Pour chaque valeur de epsilon (ou noise_std_dp que tu as choisie), trace le graphique de convergence de DGD-DP. Compare la convergence de DGD-DP (avec bruit) à celle de DGD sans DP (Partie 1). Plus de privacité (petit epsilon, donc plus de bruit) ralentit-elle la convergence ? Augmente-t-elle l'optimality gap final ? Quel est le compromis privacité-performance que tu observes ?
+Step Size pour DGD-DP : Il faudra peut-être réajuster le step_size_dgd_dp pour DGD-DP, car l'ajout de bruit peut nécessiter un step_size plus petit pour la convergence. Expérimente pour trouver un bon step_size_dgd_dp pour chaque valeur de epsilon.
+Documente : Pour chaque valeur de epsilon testée, note la valeur de noise_std_dp utilisée (et explique comment tu l'as obtenue, même si c'est une approche empirique), enregistre les graphiques de convergence, et commente le compromis privacité-performance observé, en te référant à la théorie de la privacité différentielle et de DGD-DP.
+Variation de n et m (Optionnel) : Si tu as le temps, teste DGD-DP avec n = 1000, m = 33, a = 100 (comme suggéré en option dans l'énoncé). Observe si tes conclusions sur le compromis privacité-performance restent valides à plus grande échelle.
+
+Étape 3 : Rédaction du Rapport et Préparation de la Soumission
+
+Organiser le rapport : Structure ton rapport PDF selon les parties du projet (Introduction, Partie 1, Partie 2, Partie 3, Conclusion).
+Remplir chaque section : Pour chaque partie, décris brièvement l'algorithme, explique tes choix de paramètres (en les justifiant théoriquement), inclus les graphiques lisibles (avec des labels d'axes et des titres clairs et une taille de police raisonnable), et analyse les résultats et les graphiques, en reliant tes observations à la théorie vue en cours.
+Conclusion : Résume tes principales conclusions sur la comparaison des algorithmes distribués, FedAvg, DGD-DP, et le compromis privacité-performance.
+Relire et Formater : Relis attentivement ton rapport pour la clarté, la cohérence, et l'orthographe. Formate le rapport pour qu'il soit lisible (taille de police, marges, etc.) et ne dépasse pas 10 pages. Nomme le fichier PDF selon le format demandé : LastName1_LastName2_LastName3_Final.pdf.
+Script Python Final : Assure-toi que ton script Python (.py) :
+Est lisible et bien commenté.
+Génère tous les graphiques inclus dans ton rapport PDF (convergence, fonctions apprises).
+Est exécutable sans erreur.
+Est nommé correctement : LastName1_LastName2_LastName3_Final.py.
+Soumission : Soumets les deux fichiers (.pdf et .py) sur Moodle avant la date limite (Mardi 2 Avril, 13h00, heure de Paris). Ne rate pas la date limite !
+Conseils Importants :
+
+Commencer Tôt : Ne pas attendre le dernier moment ! Il y a beaucoup d'expérimentations et d'analyses à faire.
+Travail en Équipe : Répartissez le travail entre les membres du groupe (par exemple, chaque membre peut se concentrer sur une ou deux méthodes distribuées, ou une partie du rapport). Communiquez et collaborez !
+Justification Théorique : C'est crucial pour avoir une bonne note. Chaque choix de paramètre, chaque observation doit être justifié en te référant à la théorie vue en cours et dans les articles. Ne te contente pas de décrire les résultats, explique pourquoi tu observes ces résultats en te basant sur la théorie.
+Graphiques Lisibles : Les graphiques illisibles peuvent coûter des points. Soigne la qualité de tes graphiques.
