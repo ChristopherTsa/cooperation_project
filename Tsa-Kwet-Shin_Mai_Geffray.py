@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pickle
 import networkx as nx  # Pour les graphes de communication
+from centralized_solution import solve
 
 # --- Paramètres Globaux ---
 sigma = 0.5
@@ -13,6 +14,18 @@ def load_data(filename):
     with open(filename, 'rb') as f:
         data = pickle.load(f)
     return data
+
+def visualize_data(x_data, y_data):
+    """Visualise les données x_data et y_data sous forme de scatter plot."""
+    plt.figure()
+    plt.scatter(x_data, y_data, label='Données', s=10) # 's=10' pour ajuster la taille des points
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.title("Visualisation des données chargées")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig("results/data_visualization.pdf")
+    plt.show()
 
 def euclidean_kernel(x, xi):
     """Calcule le kernel Euclidien."""
@@ -47,8 +60,11 @@ def plot_convergence(iterations, optimality_gap, algorithm_name):
     plt.savefig(f"results/convergence/convergence_{algorithm_name}.pdf")
     plt.show()
 
-def visualize_function(x_prime, alpha, X_m_points, algorithm_name):
-    """Visualise la fonction apprise sur une grille uniforme."""
+def visualize_function(x_prime, alpha, X_m_points, algorithm_name, y_nystrom, selected_data=None):
+    """Visualise la fonction apprise sur une grille uniforme et affiche
+    les vraies valeurs y pour les points Nyström.
+    Si selected_data est fourni sous la forme (x_selected, y_selected),
+    on affiche également ces points."""
     nt = len(x_prime)
     f_x_prime = np.zeros(nt)
     for i in range(nt):
@@ -56,14 +72,66 @@ def visualize_function(x_prime, alpha, X_m_points, algorithm_name):
             f_x_prime[i] += alpha[j] * euclidean_kernel(x_prime[i], X_m_points[j])
 
     plt.figure()
-    plt.plot(x_prime, f_x_prime)
-    plt.scatter(X_m_points, np.zeros_like(X_m_points), color='red', marker='x', label='Points Nyström')
+    plt.plot(x_prime, f_x_prime, label='Fonction Apprise')
+    plt.scatter(X_m_points, y_nystrom, color='red', marker='x', label='Points Nyström')
+    if selected_data is not None:
+        x_selected, y_selected = selected_data
+        plt.scatter(x_selected, y_selected, color='green', marker='o', label='Points sélectionnés', alpha=0.5)
     plt.title(f"Fonction apprise avec {algorithm_name}")
     plt.xlabel("x")
     plt.ylabel("f(x)")
     plt.legend()
     plt.grid(True)
     plt.savefig(f"results/learned_function/learned_fonction_{algorithm_name}.pdf")
+    plt.show()
+
+def plot_reconstruction_multi(x_prime, methods_alpha, X_m_points, y_nystrom, selected_data=None):
+    """
+    Affiche sur un même graphe la reconstruction des fonctions apprises
+    pour chaque méthode.
+    
+    :param x_prime: Grille d'abscisses pour calculer la fonction.
+    :param methods_alpha: Dictionnaire {nom_méthode: alpha} pour chaque méthode.
+    :param X_m_points: Points Nyström.
+    :param y_nystrom: Vraies valeurs y aux points Nyström.
+    :param selected_data: Tuple (x_selected, y_selected) si besoin d'afficher les données complètes.
+    """
+    plt.figure()
+    for method_name, alpha in methods_alpha.items():
+        f_x = np.zeros(len(x_prime))
+        for i in range(len(x_prime)):
+            for j in range(len(X_m_points)):
+                f_x[i] += alpha[j] * euclidean_kernel(x_prime[i], X_m_points[j])
+        plt.plot(x_prime, f_x, label=f"{method_name}")
+    plt.scatter(X_m_points, y_nystrom, color='red', marker='x', label="Points Nyström")
+    if selected_data is not None:
+        x_selected, y_selected = selected_data
+        plt.scatter(x_selected, y_selected, color='green', marker='o', label="100 points sélectionnés", alpha=0.5)
+    plt.title("Reconstruction Comparée des Méthodes")
+    plt.xlabel("x")
+    plt.ylabel("f(x)")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig("results/learned_function/comparison_reconstruction.pdf")
+    plt.show()
+
+def plot_convergence_multi(iterations, convergence_data):
+    """
+    Affiche sur un même graphe les courbes de convergence (optimality gap)
+    pour chaque méthode itérative.
+    
+    :param iterations: Plage d'itérations (généralement range(num_iterations)).
+    :param convergence_data: Dictionnaire {nom_méthode: liste_gap} pour chaque méthode.
+    """
+    plt.figure()
+    for method_name, gap in convergence_data.items():
+        plt.loglog(iterations, gap, label=f"{method_name}")
+    plt.xlabel("Itérations")
+    plt.ylabel("Optimality Gap")
+    plt.title("Convergence Comparée des Méthodes")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig("results/convergence/comparison_convergence.pdf")
     plt.show()
 
 # --- Fonctions pour les Algorithmes Distribués ---
@@ -225,8 +293,13 @@ def admm(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, rho
 
             # Solution analytique pour alpha_agent (dérivée de la fonction augmentée de Lagrange = 0)
             # Formule dérivée en posant la dérivée par rapport à alpha_agent de la fonction augmentée de Lagrange égale à zéro
+            #matrix_to_solve = (sigma**2 / num_agents) * Kmm + Knm_agent.T @ Knm_agent + (nu / num_agents) * np.eye(m) + rho * np.eye(m)
+            # Add small regularization for stability
+            #matrix_to_solve += 1e-8 * np.eye(m)
             agent_alphas[agent_id] = np.linalg.solve((sigma**2 / num_agents) * Kmm + Knm_agent.T @ Knm_agent + (nu / num_agents) * np.eye(m) + rho * np.eye(m),
-                                             Knm_agent.T @ y_agent + lambda_agent + rho * z_global) # Mise à jour de alpha_agent
+                                         Knm_agent.T @ y_agent + lambda_agent + rho * z_global) # Mise à jour de alpha_agent
+            #agent_alphas[agent_id] = np.linalg.solve(matrix_to_solve,
+            #                                 Knm_agent.T @ y_agent + lambda_agent + rho * z_global) # Mise à jour de alpha_agent
 
             # Contribution à la moyenne de z pour la mise à jour duale (calculée après la mise à jour primale de tous les agents)
             z_avg += agent_alphas[agent_id]
@@ -292,8 +365,6 @@ def federated_averaging(agents_X, agents_Y, X_m_points, Kmm, num_rounds, epochs_
 
     return global_alpha, objective_error_history_fedavg
 
-
-
 def dgd_dp(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph, step_size, num_iterations, alpha_star_centralized, noise_std):
     """Implémentation de DGD avec Privacité Différentielle (DGD-DP)."""
     num_agents = len(agents_data_indices)
@@ -335,7 +406,6 @@ def dgd_dp(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, c
 
     return agent_alphas, optimality_gap_history_dgd_dp
 
-
 # --- Fonction pour résoudre le problème centralisé ---
 def centralized_solution(Kmm, Knm, y, sigma, nu):
     """Calcule la solution centralisée pour comparer les méthodes distribuées."""
@@ -351,34 +421,49 @@ if __name__ == "__main__":
     # 1. Charger les données
     data_part1 = load_data('data/first_database.pkl')
     x_data, y_data = data_part1[0], data_part1[1]
+    print(f"Taille de x_data: {len(x_data)}")
+    print(f"Taille de y_data: {len(y_data)}")
+    # --- Visualisation des données ---
+    #print("Visualisation des données...")
+    #visualize_data(x_data, y_data)
+    #print("Visualisation des données terminée. Graphique sauvegardé dans data_visualization.pdf")
 
     # 2. Choisir n, m, a et diviser les données
     n_total = 100
     m_nystrom = 10
     num_agents = 5
+    nt = 250
     points_per_agent = n_total // num_agents
 
-    X_m_points, M_indices = nystrom_approximation(x_data[:n_total], m_nystrom)
+    #X_m_points, M_indices = nystrom_approximation(x_data[:n_total], m_nystrom)
+    #y_nystrom = [y_data[i] for i in M_indices]
 
     agents_data_indices = [list(range(i*points_per_agent, (i+1)*points_per_agent)) for i in range(num_agents)]
     agents_x_data = [[x_data[i] for i in indices] for indices in agents_data_indices]
     agents_y_data = [[y_data[i] for i in indices] for indices in agents_data_indices]
 
-    Kmm = kernel_matrix(X_m_points, X_m_points)
+    #Kmm = kernel_matrix(X_m_points, X_m_points)
 
     # --- Calcul de la solution centralisée ---
     print("Calcul de la solution centralisée...")
-    Knm_centralized = kernel_matrix(x_data[:n_total], X_m_points)
-    alpha_star_centralized = centralized_solution(Kmm, Knm_centralized, y_data[:n_total], sigma, nu)
+    #Knm_centralized = kernel_matrix(x_data[:n_total], X_m_points)
+    #alpha_star_centralized = centralized_solution(Kmm, Knm_centralized, y_data[:n_total], sigma, nu)
+    alpha_star_centralized, M_indices = solve(x_data[:n_total], y_data[:n_total], selection=True)
+    X_m_points = [x_data[i] for i in M_indices]
+    y_nystrom = [y_data[i] for i in M_indices]
+    Kmm = kernel_matrix(X_m_points, X_m_points)
     print("Solution centralisée calculée.")
+    x_prime_grid = np.linspace(-1, 1, nt)
+    #visualize_function(x_prime_grid, alpha_star_centralized, X_m_points, "Centralized",  y_nystrom,(x_data[:n_total], y_data[:n_total]))
 
 
     # --- 1. Decentralized Gradient Descent (DGD) ---
     print("--- Decentralized Gradient Descent (DGD) ---")
-    communication_graph_dgd = nx.Graph()
-    communication_graph_dgd.add_nodes_from(range(num_agents))
-    communication_graph_dgd.add_edges_from([(i, (i+1)%num_agents) for i in range(num_agents)]) # Graphe en anneau
-
+    #communication_graph_dgd = nx.Graph()
+    #communication_graph_dgd.add_nodes_from(range(num_agents))
+    #communication_graph_dgd.add_edges_from([(i, (i+1)%num_agents) for i in range(num_agents)]) # Graphe en anneau
+    communication_graph_dgd = nx.complete_graph(num_agents)
+    
     step_size_dgd = 0.01
     num_iterations_dgd = 1000
 
@@ -388,25 +473,24 @@ if __name__ == "__main__":
     )
 
     iterations_dgd = range(num_iterations_dgd)
-    plot_convergence(iterations_dgd, optimality_gap_history_dgd, "DGD")
+    #plot_convergence(iterations_dgd, optimality_gap_history_dgd, "DGD")
     avg_alpha_dgd = np.mean(agent_alphas_dgd, axis=0)
-    x_prime_grid = np.linspace(-1, 1, 250)
-    visualize_function(x_prime_grid, avg_alpha_dgd, X_m_points, "DGD")
+    #visualize_function(x_prime_grid, avg_alpha_dgd, X_m_points, "DGD", y_nystrom, (x_data[:n_total], y_data[:n_total]))
 
 
     # --- 2. Gradient Tracking (GT) ---
     print("--- Gradient Tracking (GT) ---")
     communication_graph_gt = communication_graph_dgd.copy()
-    step_size_gt = 0.015 # Ajuster step size pour GT
+    step_size_gt = 0.005 # Ajuster step size pour GT
     agent_alphas_gt, optimality_gap_history_gt = gradient_tracking(
         agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph_gt,
         step_size_gt, num_iterations_dgd, alpha_star_centralized # Réutiliser num_iterations_dgd
     )
 
     iterations_gt = range(num_iterations_dgd)
-    plot_convergence(iterations_gt, optimality_gap_history_gt, "GradientTracking")
+    #plot_convergence(iterations_gt, optimality_gap_history_gt, "GradientTracking")
     avg_alpha_gt = np.mean(agent_alphas_gt, axis=0)
-    visualize_function(x_prime_grid, avg_alpha_gt, X_m_points, "GradientTracking")
+    #visualize_function(x_prime_grid, avg_alpha_gt, X_m_points, "GradientTracking",  y_nystrom, (x_data[:n_total], y_data[:n_total]))
 
 
     # --- 3. Dual Decomposition (DD) ---
@@ -421,23 +505,43 @@ if __name__ == "__main__":
     )
 
     iterations_dd = range(num_iterations_dgd)
-    plot_convergence(iterations_dd, optimality_gap_history_dd, "DualDecomposition")
-    visualize_function(x_prime_grid, z_global_dd, X_m_points, "DualDecomposition") # Utiliser z_global pour visualiser
+    #plot_convergence(iterations_dd, optimality_gap_history_dd, "DualDecomposition")
+    #visualize_function(x_prime_grid, z_global_dd, X_m_points, "DualDecomposition", y_nystrom, (x_data[:n_total], y_data[:n_total])) # Utiliser z_global pour visualiser
 
 
     # --- 4. ADMM ---
     print("--- ADMM ---")
     communication_graph_admm = communication_graph_dgd.copy()
-    rho_admm = 0.1 # Paramètre de pénalité de l'ADMM, à ajuster
+    rho_admm = 0.0001 # Paramètre de pénalité de l'ADMM, à ajuster
+    num_iterations_admm = 3000  # or even 3000
     agent_alphas_admm, optimality_gap_history_admm, z_global_admm = admm(
         agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, rho_admm,
-        num_iterations_dgd, alpha_star_centralized # Réutiliser num_iterations_dgd
+        num_iterations_admm, alpha_star_centralized # Réutiliser num_iterations_dgd
     )
 
     iterations_admm = range(num_iterations_dgd)
-    plot_convergence(iterations_admm, optimality_gap_history_admm, "ADMM")
-    visualize_function(x_prime_grid, z_global_admm, X_m_points, "ADMM") # Utiliser z_global pour visualiser
+    #plot_convergence(iterations_admm, optimality_gap_history_admm, "ADMM")
+    #visualize_function(x_prime_grid, z_global_admm, X_m_points, "ADMM", y_nystrom, (x_data[:n_total], y_data[:n_total])) # Utiliser z_global pour visualiser
 
+    # Regroupement pour la reconstruction
+    methods_alpha = {
+        "Centralized": alpha_star_centralized,
+        "DGD": avg_alpha_dgd,
+        "GradientTracking": avg_alpha_gt,
+        "DualDecomposition": z_global_dd,
+        "ADMM": z_global_admm
+    }
+    plot_reconstruction_multi(x_prime_grid, methods_alpha, X_m_points, y_nystrom, (x_data[:n_total], y_data[:n_total]))
+
+    # Regroupement pour la convergence (uniquement les méthodes itératives)
+    convergence_data = {
+        "DGD": optimality_gap_history_dgd,
+        "GradientTracking": optimality_gap_history_gt,
+        "DualDecomposition": optimality_gap_history_dd,
+        "ADMM": optimality_gap_history_admm
+    }
+    iterations = range(num_iterations_dgd)
+    plot_convergence_multi(iterations, convergence_data)
 
     # --- Partie 2: Federated Averaging (FedAvg) ---
     print("--- Partie 2: Federated Averaging (FedAvg) ---")
@@ -462,7 +566,7 @@ if __name__ == "__main__":
     iterations_fedavg = range(num_rounds_fedavg)
     plot_convergence(iterations_fedavg, objective_error_history_fedavg, "FedAvg_ObjectiveError") # Convergence erreur objective
     x_prime_grid_fedavg = np.linspace(-1, 1, 250)
-    visualize_function(x_prime_grid_fedavg, global_alpha_fedavg, X_m_points_part2, "FedAvg")
+    visualize_function(x_prime_grid_fedavg, global_alpha_fedavg, X_m_points_part2, "FedAvg",  y_nystrom, (x_data[:n_total], y_data[:n_total]))
 
 
     # --- Partie 3: DGD-DP ---
@@ -480,7 +584,7 @@ if __name__ == "__main__":
     iterations_dgd_dp = range(num_iterations_dgd_dp)
     plot_convergence(iterations_dgd_dp, optimality_gap_history_dgd_dp, "DGD_DP")
     avg_alpha_dgd_dp = np.mean(agent_alphas_dgd_dp, axis=0)
-    visualize_function(x_prime_grid, avg_alpha_dgd_dp, X_m_points, "DGD_DP")
+    visualize_function(x_prime_grid, avg_alpha_dgd_dp, X_m_points, "DGD_DP",  y_nystrom, (x_data[:n_total], y_data[:n_total]))
 
 
     print("--- Fin du script principal ---")

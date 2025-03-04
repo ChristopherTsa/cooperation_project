@@ -76,14 +76,14 @@ def plot_me(x,y, alpha, ind, selection=True):
 Main follows
 """
 
-with open('first_database.pkl', 'rb') as f:
-   x,y = pickle.load(f)
+#with open('data/first_database.pkl', 'rb') as f:
+#   x,y = pickle.load(f)
 
 
-num_points = 100
-alpha, ind = solve(x[:num_points],y[:num_points], selection=True)
+#num_points = 100
+#alpha, ind = solve(x[:num_points],y[:num_points], selection=True)
 
-print('Result summary -----------------')
-print('Optimal centralised alpha = ', alpha)
+#print('Result summary -----------------')
+#print('Optimal centralised alpha = ', alpha)
 
-plot_me(x[:num_points],y[:num_points], alpha, ind, selection=True)
+#plot_me(x[:num_points],y[:num_points], alpha, ind, selection=True)
