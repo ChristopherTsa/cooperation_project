@@ -172,7 +172,7 @@ def decentralized_gradient_descent(agents_data_indices, agents_x_data, agents_y_
 
 
 def gradient_tracking(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph, step_size, num_iterations, alpha_star_centralized):
-    """Implémentation de Gradient Tracking (GT)."""
+    """Implémentation améliorée de Gradient Tracking (GT) avec stabilité accrue."""
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
     agent_alphas = [np.zeros(m) for _ in range(num_agents)]
@@ -180,44 +180,85 @@ def gradient_tracking(agents_data_indices, agents_x_data, agents_y_data, X_m_poi
     agents_Knm = []
     for agent_x in agents_x_data:
         agents_Knm.append(kernel_matrix(agent_x, X_m_points))
-
+    
+    # Création explicite de la matrice de poids W doublement stochastique
+    W = np.zeros((num_agents, num_agents))
+    for i in range(num_agents):
+        neighbors = list(communication_graph.neighbors(i)) + [i]  # Add self-loop
+        for j in neighbors:
+            W[i, j] = 1.0 / len(neighbors)  # Equal weights
+    
+    # Initialisation des gradients locaux
     for agent_id in range(num_agents):
         Knm_agent = agents_Knm[agent_id]
         y_agent = agents_y_data[agent_id]
         alpha_agent = agent_alphas[agent_id]
         agent_gradients[agent_id] = (sigma**2 / num_agents) * Kmm @ alpha_agent - (Knm_agent.T @ (y_agent - Knm_agent @ alpha_agent)) + (nu / num_agents) * alpha_agent
-
+    
     optimality_gap_history_gt = []
-
+    current_step_size = step_size
+    clip_value = 10.0  # Limite pour le clipping des gradients
+    
     for iteration in range(num_iterations):
         new_agent_alphas = [np.zeros(m) for _ in range(num_agents)]
         new_agent_gradients = [np.zeros(m) for _ in range(num_agents)]
-
+        
+        # Décroissance du pas si nécessaire (peut être ajustée)
+        if iteration > 0 and iteration % 200 == 0:
+            current_step_size *= 0.9
+        
         for agent_id in range(num_agents):
+            # 1. Compute weighted average of alphas
             alpha_avg = np.zeros(m)
-            neighbors = list(communication_graph.neighbors(agent_id)) + [agent_id]
-            for neighbor_id in neighbors:
-                alpha_avg += agent_alphas[neighbor_id]
-            alpha_avg /= len(neighbors)
-
+            for neighbor_id in range(num_agents):
+                if W[agent_id, neighbor_id] > 0:
+                    alpha_avg += W[agent_id, neighbor_id] * agent_alphas[neighbor_id]
+            
+            # 2. Compute current local gradient
             Knm_agent = agents_Knm[agent_id]
             y_agent = agents_y_data[agent_id]
             current_grad_local = (sigma**2 / num_agents) * Kmm @ agent_alphas[agent_id] - (Knm_agent.T @ (y_agent - Knm_agent @ agent_alphas[agent_id])) + (nu / num_agents) * agent_alphas[agent_id]
-
+            
+            # 3. Apply gradient clipping for stability
+            norm_grad = np.linalg.norm(current_grad_local)
+            if norm_grad > clip_value:
+                current_grad_local = current_grad_local * (clip_value / norm_grad)
+            
+            # 4. Compute weighted average of gradients
             gradient_avg = np.zeros(m)
-            for neighbor_id in neighbors:
-                gradient_avg += agent_gradients[neighbor_id]
-            gradient_avg /= len(neighbors)
-
-            new_agent_alphas[agent_id] = alpha_avg - step_size * agent_gradients[agent_id]
-            new_agent_gradients[agent_id] = gradient_avg + current_grad_local - agent_gradients[agent_id]
-
+            for neighbor_id in range(num_agents):
+                if W[agent_id, neighbor_id] > 0:
+                    gradient_avg += W[agent_id, neighbor_id] * agent_gradients[neighbor_id]
+            
+            # 5. Update alpha and gradient tracking variable
+            new_agent_alphas[agent_id] = alpha_avg - current_step_size * agent_gradients[agent_id]
+            new_agent_gradients[agent_id] = gradient_avg + (current_grad_local - agent_gradients[agent_id])
+        
+        # 6. Check for divergence
+        max_alpha_norm = max([np.linalg.norm(alpha) for alpha in new_agent_alphas])
+        if np.isnan(max_alpha_norm) or max_alpha_norm > 1e6:
+            print(f"Warning: GT diverged at iteration {iteration}. Reducing step size and continuing...")
+            current_step_size *= 0.1
+            for agent_id in range(num_agents):
+                new_agent_alphas[agent_id] = agent_alphas[agent_id]  # Reset to previous values
+                # Recompute with smaller step size
+                alpha_avg = np.zeros(m)
+                for neighbor_id in range(num_agents):
+                    if W[agent_id, neighbor_id] > 0:
+                        alpha_avg += W[agent_id, neighbor_id] * agent_alphas[neighbor_id]
+                new_agent_alphas[agent_id] = alpha_avg - current_step_size * agent_gradients[agent_id]
+        
         agent_alphas = new_agent_alphas
         agent_gradients = new_agent_gradients
-
+        
         avg_alpha = np.mean(agent_alphas, axis=0)
         optimality_gap = np.linalg.norm(avg_alpha - alpha_star_centralized)
         optimality_gap_history_gt.append(optimality_gap)
+        
+        # 7. Optional early stopping if convergence is detected
+        if iteration > 10 and optimality_gap < 1e-6:
+            print(f"GT converged at iteration {iteration} with gap: {optimality_gap:.6f}")
+            break
 
     return agent_alphas, optimality_gap_history_gt
 
@@ -274,60 +315,72 @@ def dual_decomposition(agents_data_indices, agents_x_data, agents_y_data, X_m_po
     return agent_alphas, optimality_gap_history_dd, z_global
 
 
-
 def admm(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, rho, num_iterations, alpha_star_centralized):
-    """Implémentation de ADMM."""
+    """
+    Réimplémentation "from scratch" d'ADMM en mode pair-à-pair (théorie).
+    """
+    import itertools
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
-    agent_alphas = [np.zeros(m) for _ in range(num_agents)] # Variables primales locales
-    agent_lambdas = [np.zeros(m) for _ in range(num_agents)] # Variables duales locales
-    #z_global = np.zeros(m) # Variable primale globale (consensus) - initialisée à zéro
-    agents_Knm = []
-    for agent_x in agents_x_data:
-        agents_Knm.append(kernel_matrix(agent_x, X_m_points))
     
-    # Initialize z_global to something better than zeros
-    z_global = np.mean([np.linalg.solve(Knm.T @ Knm + 0.01 * np.eye(m), Knm.T @ y) 
-                   for Knm, y in zip(agents_Knm, agents_y_data)], axis=0)
-
+    # Initialisation de alpha, y, lambda
+    alpha = [np.zeros(m) for _ in range(num_agents)]
+    y = {}
+    lambdas = {}
+    for (i, j) in itertools.combinations(range(num_agents), 2):
+        y[(i, j)] = np.zeros(m)
+        lambdas[(i, j)] = np.zeros(m)
+    
+    # Précompute matrices pour gradient local
+    agents_Knm = [kernel_matrix(agents_x_data[i], X_m_points) for i in range(num_agents)]
+    
+    def local_objective_grad(i, alpha_i):
+        # Gradient du coût local (régression kernel)
+        Knm_i = agents_Knm[i]
+        y_i = agents_y_data[i]
+        grad_local = (sigma**2 / num_agents) * Kmm @ alpha_i \
+                     - (Knm_i.T @ (y_i - Knm_i @ alpha_i)) \
+                     + (nu / num_agents) * alpha_i
+        return grad_local
+    
     optimality_gap_history_admm = []
+    
+    for _ in range(num_iterations):
+        # 1) Mise à jour locale alpha_i
+        for i in range(num_agents):
+            # On rassemble la pénalité (alpha_i - y_ij + lambdas/ρ)
+            penalty_sum = np.zeros(m)
+            neighbors_count = 0
+            for j in range(num_agents):
+                if j == i: 
+                    continue
+                # Gestion y_ij et lambda_ij pour indexer (i,j) ou (j,i) de manière unique
+                if i < j:
+                    penalty_sum += (alpha[i] - y[(i, j)] + lambdas[(i, j)] / rho)
+                else:
+                    penalty_sum += (alpha[i] - y[(j, i)] - lambdas[(j, i)] / rho)
+                neighbors_count += 1
+            
+            # Simple descente (ou mise à jour) en considérant penalty_sum
+            grad_i = local_objective_grad(i, alpha[i]) + rho * penalty_sum
+            alpha[i] -= 0.01 * grad_i  # Step-size fixe, ajuster si besoin
 
-    for iteration in range(num_iterations):
-        z_avg = np.zeros(m) # Pour accumuler la somme des alphas pour la mise à jour de z
+        # 2) Mise à jour y_ij
+        for (i, j) in y.keys():
+            y[(i, j)] = 0.5 * (alpha[i] + alpha[j])
 
-        for agent_id in range(num_agents):
-            # 1. Mise à jour de alpha (étape de minimisation locale - mise à jour primale)
-            Knm_agent = agents_Knm[agent_id]
-            y_agent = agents_y_data[agent_id]
-            lambda_agent = agent_lambdas[agent_id]
+        # 3) Mise à jour lambdas
+        for (i, j) in lambdas.keys():
+            lambdas[(i, j)] += rho * (alpha[i] - y[(i, j)])
+            # Note: on n'a pas besoin de (j, i) car lambda_ij != lambda_ji dans la théorie,
+            # mais on stocke seulement (i, j) pour i<j
 
-            # Solution analytique pour alpha_agent (dérivée de la fonction augmentée de Lagrange = 0)
-            # Formule dérivée en posant la dérivée par rapport à alpha_agent de la fonction augmentée de Lagrange égale à zéro
-            #matrix_to_solve = (sigma**2 / num_agents) * Kmm + Knm_agent.T @ Knm_agent + (nu / num_agents) * np.eye(m) + rho * np.eye(m)
-            # Add small regularization for stability
-            #matrix_to_solve += 1e-8 * np.eye(m)
-            agent_alphas[agent_id] = np.linalg.solve((sigma**2 / num_agents) * Kmm + Knm_agent.T @ Knm_agent + (nu / num_agents) * np.eye(m) + rho * np.eye(m),
-                                         Knm_agent.T @ y_agent + lambda_agent + rho * z_global) # Mise à jour de alpha_agent
-            #agent_alphas[agent_id] = np.linalg.solve(matrix_to_solve,
-            #                                 Knm_agent.T @ y_agent + lambda_agent + rho * z_global) # Mise à jour de alpha_agent
-
-            # Contribution à la moyenne de z pour la mise à jour duale (calculée après la mise à jour primale de tous les agents)
-            z_avg += agent_alphas[agent_id]
-
-
-        # 2. Mise à jour de z (étape de consensus - mise à jour primale globale)
-        z_global = z_avg / num_agents # Mise à jour de z_global (consensus sur les alphas locaux)
-
-        # 3. Mise à jour de lambda (étape duale) - Pour chaque agent
-        for agent_id in range(num_agents):
-            agent_lambdas[agent_id] = agent_lambdas[agent_id] + rho * (agent_alphas[agent_id] - z_global) # Mise à jour de lambda_agent (variable duale)
-
-
-        # Calcul de l'optimality gap (comparaison de z_global avec alpha_star_centralized)
-        optimality_gap = np.linalg.norm(z_global - alpha_star_centralized)
-        optimality_gap_history_admm.append(optimality_gap)
-
-    return agent_alphas, optimality_gap_history_admm, z_global
+        # 4) Mesure de l'écart à la solution centralisée
+        avg_alpha = np.mean(alpha, axis=0)
+        gap = np.linalg.norm(avg_alpha - alpha_star_centralized)
+        optimality_gap_history_admm.append(gap)
+    
+    return alpha, optimality_gap_history_admm, np.mean(alpha, axis=0)
 
 
 def federated_averaging(agents_X, agents_Y, X_m_points, Kmm, num_rounds, epochs_per_round, batch_size, learning_rate):
@@ -491,7 +544,7 @@ if __name__ == "__main__":
     # --- 2. Gradient Tracking (GT) ---
     print("--- Gradient Tracking (GT) ---")
     communication_graph_gt = communication_graph_dgd.copy()
-    step_size_gt = 0.005 # Ajuster step size pour GT
+    step_size_gt = 0.01 # Ajuster step size pour GT
     agent_alphas_gt, optimality_gap_history_gt = gradient_tracking(
         agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph_gt,
         step_size_gt, num_iterations_dgd, alpha_star_centralized # Réutiliser num_iterations_dgd
@@ -506,7 +559,7 @@ if __name__ == "__main__":
     # --- 3. Dual Decomposition (DD) ---
     print("--- Dual Decomposition (DD) ---")
     communication_graph_dd = communication_graph_dgd.copy()
-    step_size_primal_dd = 0.01
+    #step_size_primal_dd = 0.01
     step_size_dual_dd = 0.1
     #rho_dd = 0.1 # Paramètre de pénalité de l'ADMM, à ajuster
     agent_alphas_dd, optimality_gap_history_dd, z_global_dd = dual_decomposition(
@@ -522,10 +575,9 @@ if __name__ == "__main__":
     # --- 4. ADMM ---
     print("--- ADMM ---")
     communication_graph_admm = communication_graph_dgd.copy()
-    # Increase rho_admm from 0.0001 to 0.1 for better stability
-    rho_admm = 0.1  # This was too small before (0.0001)
-    # Use same number of iterations as other methods
-    num_iterations_admm = num_iterations_dgd  # Match other methods' iteration count
+    # Paramètre rho plus élevé pour ADMM
+    rho_admm = 1.0  # Beaucoup plus élevé que 0.0001 pour assurer la convergence
+    num_iterations_admm = num_iterations_dgd
     agent_alphas_admm, optimality_gap_history_admm, z_global_admm = admm(
         agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, rho_admm,
         num_iterations_admm, alpha_star_centralized
@@ -536,8 +588,7 @@ if __name__ == "__main__":
 
     iterations_admm = range(len(optimality_gap_history_admm))
     #plot_convergence(iterations_admm, optimality_gap_history_admm, "ADMM")
-
-    # ...existing code...
+    #visualize_function(x_prime_grid, z_global_admm, X_m_points, "ADMM", y_nystrom, (x_data[:n_total], y_data[:n_total]))
     
     # Ensure all methods have the same length for plotting
     min_length = min(len(optimality_gap_history_dgd), 
@@ -553,6 +604,17 @@ if __name__ == "__main__":
     }
     iterations = range(min_length)
     plot_convergence_multi(iterations, convergence_data)
+
+    # Add a combined plot of all methods
+    print("Visualisation comparée de toutes les méthodes")
+    methods_alpha = {
+        "Centralized": alpha_star_centralized,
+        "DGD": avg_alpha_dgd,
+        "GradientTracking": avg_alpha_gt,
+        "DualDecomposition": z_global_dd,
+        "ADMM": z_global_admm
+    }
+    plot_reconstruction_multi(x_prime_grid, methods_alpha, X_m_points, y_nystrom, (x_data[:n_total], y_data[:n_total]))
 
     # --- Partie 2: Federated Averaging (FedAvg) ---
     print("--- Partie 2: Federated Averaging (FedAvg) ---")
