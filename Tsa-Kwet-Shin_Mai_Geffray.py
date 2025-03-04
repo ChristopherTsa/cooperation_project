@@ -222,49 +222,55 @@ def gradient_tracking(agents_data_indices, agents_x_data, agents_y_data, X_m_poi
     return agent_alphas, optimality_gap_history_gt
 
 
-def dual_decomposition(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph, step_size_primal, step_size_dual, rho, num_iterations, alpha_star_centralized):
-    """Implémentation de la Décomposition Duale (DD)."""
+def dual_decomposition(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph, step_size_dual, num_iterations, alpha_star_centralized):
+    """Implémentation standard de la Décomposition Duale (DD) avec une approche plus fondamentale."""
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
-    agent_alphas = [np.zeros(m) for _ in range(num_agents)] # Variables primales locales
-    agent_lambdas = [np.zeros(m) for _ in range(num_agents)] # Variables duales locales
-    z_global = np.zeros(m) # Variable primale globale (consensus)
+    
+    # Initialize local variables
+    agent_alphas = [np.zeros(m) for _ in range(num_agents)]
+    agent_lambdas = [np.zeros(m) for _ in range(num_agents)]
+    
+    # Precompute kernel matrices
     agents_Knm = []
     for agent_x in agents_x_data:
         agents_Knm.append(kernel_matrix(agent_x, X_m_points))
 
+    # For storing history
     optimality_gap_history_dd = []
-
+    
+    # For better numerical stability, precompute these matrices
+    agents_hessian_inv = []
+    for agent_id in range(num_agents):
+        Knm = agents_Knm[agent_id]
+        # Local Hessian: K_nm^T * K_nm + (regularization terms / num_agents)
+        hessian = Knm.T @ Knm + (nu/num_agents) * np.eye(m) + (sigma**2/num_agents) * Kmm
+        agents_hessian_inv.append(np.linalg.inv(hessian))
+    
     for iteration in range(num_iterations):
-        z_avg = np.zeros(m)
+        # 1. Primal updates (exact minimization of augmented Lagrangian)
         for agent_id in range(num_agents):
-            # 1. Mise à jour de alpha (primale locale)
-            Knm_agent = agents_Knm[agent_id]
+            Knm = agents_Knm[agent_id]
             y_agent = agents_y_data[agent_id]
-            lambda_agent = agent_lambdas[agent_id]
-            alpha_agent_prev = agent_alphas[agent_id] # Pour la mise à jour de lambda
-
-            # Gradient de la fonction augmentée de Lagrange (par rapport à alpha_agent)
-            grad_L_alpha = (sigma**2 / num_agents) * Kmm @ agent_alphas[agent_id] - (Knm_agent.T @ (y_agent - Knm_agent @ agent_alphas[agent_id])) + (nu / num_agents) * agent_alphas[agent_id] - lambda_agent + rho * (agent_alphas[agent_id] - z_global)
-
-            agent_alphas[agent_id] = agent_alphas[agent_id] - step_size_primal * grad_L_alpha # Mise à jour primale (gradient ascent sur -L)
-
-            # Contribution à la moyenne de z pour la mise à jour duale (calculée après la mise à jour primale de tous les agents)
-            z_avg += agent_alphas[agent_id]
-
-
-        # 2. Mise à jour de z (primale globale - consensus)
-        z_global = z_avg / num_agents # Moyenne des alphas locaux
-
-        # 3. Mise à jour de lambda (duale) - Pour chaque agent
+            
+            # Compute right-hand side vector
+            rhs = Knm.T @ y_agent + agent_lambdas[agent_id]
+            
+            # Solve local optimization problem exactly
+            agent_alphas[agent_id] = agents_hessian_inv[agent_id] @ rhs
+        
+        # 2. Compute the global average (standard for dual decomposition)
+        z_global = np.mean(agent_alphas, axis=0)
+        
+        # 3. Dual variable updates
         for agent_id in range(num_agents):
-            agent_lambdas[agent_id] = agent_lambdas[agent_id] + step_size_dual * rho * (agent_alphas[agent_id] - z_global) # Mise à jour duale (gradient ascent sur L par rapport à lambda)
-
-
-        # Calcul de l'optimality gap (comparaison de z_global avec alpha_star_centralized)
-        optimality_gap = np.linalg.norm(z_global - alpha_star_centralized)
+            agent_lambdas[agent_id] = agent_lambdas[agent_id] - step_size_dual * (agent_alphas[agent_id] - z_global)
+        
+        # Compute optimality gap
+        avg_alpha = np.mean(agent_alphas, axis=0)
+        optimality_gap = np.linalg.norm(avg_alpha - alpha_star_centralized)
         optimality_gap_history_dd.append(optimality_gap)
-
+    
     return agent_alphas, optimality_gap_history_dd, z_global
 
 
@@ -275,10 +281,14 @@ def admm(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, rho
     m = len(X_m_points)
     agent_alphas = [np.zeros(m) for _ in range(num_agents)] # Variables primales locales
     agent_lambdas = [np.zeros(m) for _ in range(num_agents)] # Variables duales locales
-    z_global = np.zeros(m) # Variable primale globale (consensus) - initialisée à zéro
+    #z_global = np.zeros(m) # Variable primale globale (consensus) - initialisée à zéro
     agents_Knm = []
     for agent_x in agents_x_data:
         agents_Knm.append(kernel_matrix(agent_x, X_m_points))
+    
+    # Initialize z_global to something better than zeros
+    z_global = np.mean([np.linalg.solve(Knm.T @ Knm + 0.01 * np.eye(m), Knm.T @ y) 
+                   for Knm, y in zip(agents_Knm, agents_y_data)], axis=0)
 
     optimality_gap_history_admm = []
 
@@ -497,13 +507,13 @@ if __name__ == "__main__":
     print("--- Dual Decomposition (DD) ---")
     communication_graph_dd = communication_graph_dgd.copy()
     step_size_primal_dd = 0.01
-    step_size_dual_dd = 0.01
-    rho_dd = 0.1 # Paramètre de pénalité de l'ADMM, à ajuster
+    step_size_dual_dd = 0.1
+    #rho_dd = 0.1 # Paramètre de pénalité de l'ADMM, à ajuster
     agent_alphas_dd, optimality_gap_history_dd, z_global_dd = dual_decomposition(
         agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph_dd,
-        step_size_primal_dd, step_size_dual_dd, rho_dd, num_iterations_dgd, alpha_star_centralized
+        step_size_dual_dd, num_iterations_dgd, alpha_star_centralized
     )
-
+    
     iterations_dd = range(num_iterations_dgd)
     #plot_convergence(iterations_dd, optimality_gap_history_dd, "DualDecomposition")
     #visualize_function(x_prime_grid, z_global_dd, X_m_points, "DualDecomposition", y_nystrom, (x_data[:n_total], y_data[:n_total])) # Utiliser z_global pour visualiser
@@ -512,35 +522,36 @@ if __name__ == "__main__":
     # --- 4. ADMM ---
     print("--- ADMM ---")
     communication_graph_admm = communication_graph_dgd.copy()
-    rho_admm = 0.0001 # Paramètre de pénalité de l'ADMM, à ajuster
-    num_iterations_admm = 3000  # or even 3000
+    # Increase rho_admm from 0.0001 to 0.1 for better stability
+    rho_admm = 0.1  # This was too small before (0.0001)
+    # Use same number of iterations as other methods
+    num_iterations_admm = num_iterations_dgd  # Match other methods' iteration count
     agent_alphas_admm, optimality_gap_history_admm, z_global_admm = admm(
         agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, rho_admm,
-        num_iterations_admm, alpha_star_centralized # Réutiliser num_iterations_dgd
+        num_iterations_admm, alpha_star_centralized
     )
 
-    iterations_admm = range(num_iterations_dgd)
+    # Debug - Print lengths for verification
+    print(f"Lengths - DGD: {len(optimality_gap_history_dgd)}, GT: {len(optimality_gap_history_gt)}, DD: {len(optimality_gap_history_dd)}, ADMM: {len(optimality_gap_history_admm)}")
+
+    iterations_admm = range(len(optimality_gap_history_admm))
     #plot_convergence(iterations_admm, optimality_gap_history_admm, "ADMM")
-    #visualize_function(x_prime_grid, z_global_admm, X_m_points, "ADMM", y_nystrom, (x_data[:n_total], y_data[:n_total])) # Utiliser z_global pour visualiser
 
-    # Regroupement pour la reconstruction
-    methods_alpha = {
-        "Centralized": alpha_star_centralized,
-        "DGD": avg_alpha_dgd,
-        "GradientTracking": avg_alpha_gt,
-        "DualDecomposition": z_global_dd,
-        "ADMM": z_global_admm
-    }
-    plot_reconstruction_multi(x_prime_grid, methods_alpha, X_m_points, y_nystrom, (x_data[:n_total], y_data[:n_total]))
-
-    # Regroupement pour la convergence (uniquement les méthodes itératives)
+    # ...existing code...
+    
+    # Ensure all methods have the same length for plotting
+    min_length = min(len(optimality_gap_history_dgd), 
+                    len(optimality_gap_history_gt),
+                    len(optimality_gap_history_dd), 
+                    len(optimality_gap_history_admm))
+                    
     convergence_data = {
-        "DGD": optimality_gap_history_dgd,
-        "GradientTracking": optimality_gap_history_gt,
-        "DualDecomposition": optimality_gap_history_dd,
-        "ADMM": optimality_gap_history_admm
+        "DGD": optimality_gap_history_dgd[:min_length],
+        "GradientTracking": optimality_gap_history_gt[:min_length],
+        "DualDecomposition": optimality_gap_history_dd[:min_length],
+        "ADMM": optimality_gap_history_admm[:min_length]
     }
-    iterations = range(num_iterations_dgd)
+    iterations = range(min_length)
     plot_convergence_multi(iterations, convergence_data)
 
     # --- Partie 2: Federated Averaging (FedAvg) ---
