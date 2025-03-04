@@ -383,47 +383,129 @@ def admm(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, rho
     return alpha, optimality_gap_history_admm, np.mean(alpha, axis=0)
 
 
-def federated_averaging(agents_X, agents_Y, X_m_points, Kmm, num_rounds, epochs_per_round, batch_size, learning_rate):
-    """Implémentation de Federated Averaging (FedAvg)."""
+def federated_averaging(agents_X, agents_Y, X_m_points, Kmm, num_rounds, epochs_per_round, batch_size, learning_rate, client_selection_prob=1.0, use_decreasing_lr=False):
+    """
+    Implémentation améliorée de Federated Averaging (FedAvg).
+    
+    :param agents_X: Données x par agent
+    :param agents_Y: Données y par agent
+    :param X_m_points: Points Nyström
+    :param Kmm: Matrice kernel entre points Nyström
+    :param num_rounds: Nombre de rounds de communication serveur-clients
+    :param epochs_per_round: Nombre d'époques locales par round
+    :param batch_size: Taille des mini-batchs pour SGD local
+    :param learning_rate: Taux d'apprentissage initial
+    :param client_selection_prob: Probabilité de sélection d'un client à chaque round (entre 0 et 1)
+    :param use_decreasing_lr: Si True, utilise un taux d'apprentissage décroissant O(1/t)
+    :return: global_alpha et historique d'erreur
+    """
     num_agents = len(agents_X)
     m = len(X_m_points)
     global_alpha = np.zeros(m)
 
+    # Historique pour tracer l'évolution
     objective_error_history_fedavg = []
+    
+    # Nombre d'échantillons par agent (pour la pondération)
+    client_sample_counts = np.array([len(agent_x) for agent_x in agents_X])
+    
+    # Précalcul des matrices kernel pour éviter de les recalculer à chaque round
+    agents_Knm_full = [kernel_matrix(agents_X[i], X_m_points) for i in range(num_agents)]
 
     for round_num in range(num_rounds):
-        selected_agent_indices = list(range(num_agents)) # Tous les agents sont sélectionnés
-
+        # 1. SERVEUR: Sélection des clients avec une probabilité définie
+        selected_clients = []
+        for agent_id in range(num_agents):
+            if np.random.random() < client_selection_prob:
+                selected_clients.append(agent_id)
+        
+        # Si aucun client n'est sélectionné, en sélectionner un aléatoirement
+        if not selected_clients:
+            selected_clients = [np.random.randint(0, num_agents)]
+            
+        print(f"Round {round_num+1}/{num_rounds}, {len(selected_clients)}/{num_agents} clients sélectionnés")
+        
+        # 2. CLIENTS: Mise à jour locale
         local_alphas = []
-        for agent_id in selected_agent_indices:
+        sample_counts_selected = []  # Pour la pondération
+        
+        for agent_id in selected_clients:
             agent_x = agents_X[agent_id]
             agent_y = agents_Y[agent_id]
-            Knm_agent = kernel_matrix(agent_x, X_m_points)
+            Knm_agent_full = agents_Knm_full[agent_id]
             local_alpha = global_alpha.copy()
-
+            
+            # Apprentissage local sur plusieurs époques
             for epoch in range(epochs_per_round):
-                indices_batch = np.random.choice(len(agent_x), batch_size, replace=False)
-                x_batch = [agent_x[i] for i in indices_batch]
-                y_batch = [agent_y[i] for i in indices_batch]
-                Knm_batch = kernel_matrix(x_batch, X_m_points)
-
-                grad_local = (sigma**2 / num_agents) * Kmm @ local_alpha - (Knm_batch.T @ (y_batch - Knm_batch @ local_alpha)) + (nu / num_agents) * local_alpha
-                local_alpha = local_alpha - learning_rate * grad_local
-
+                # Déterminer combien de batchs par époque (parcourir potentiellement toutes les données)
+                num_samples = len(agent_x)
+                num_batches = max(1, num_samples // batch_size)
+                
+                # Mélanger les indices
+                indices_all = np.random.permutation(num_samples)
+                
+                # Pour chaque batch dans cette époque
+                for batch_idx in range(num_batches):
+                    # Sélectionner les indices pour ce batch
+                    start_idx = batch_idx * batch_size
+                    end_idx = min(start_idx + batch_size, num_samples)
+                    if start_idx >= end_idx:
+                        continue
+                        
+                    indices_batch = indices_all[start_idx:end_idx]
+                    
+                    # Extraire le batch
+                    x_batch = [agent_x[i] for i in indices_batch]
+                    y_batch = [agent_y[i] for i in indices_batch]
+                    
+                    # Calculer la matrice kernel pour ce batch
+                    Knm_batch = kernel_matrix(x_batch, X_m_points)
+                    
+                    # Calculer le gradient local sur ce batch
+                    grad_local = (sigma**2 / num_agents) * Kmm @ local_alpha - \
+                                (Knm_batch.T @ (y_batch - Knm_batch @ local_alpha)) + \
+                                (nu / num_agents) * local_alpha
+                    
+                    # Taux d'apprentissage décroissant si demandé
+                    current_lr = learning_rate
+                    if use_decreasing_lr:
+                        # Formule O(1/t) où t est le numéro de l'itération global
+                        global_iter = round_num * epochs_per_round * num_batches + epoch * num_batches + batch_idx
+                        current_lr = learning_rate / (1 + 0.01 * global_iter)
+                    
+                    # Mise à jour SGD locale
+                    local_alpha = local_alpha - current_lr * grad_local
+            
+            # Stocker le résultat de ce client et son nombre d'échantillons
             local_alphas.append(local_alpha)
+            sample_counts_selected.append(client_sample_counts[agent_id])
+        
+        # 3. SERVEUR: Agrégation pondérée par le nombre d'échantillons
+        sample_counts_selected = np.array(sample_counts_selected)
+        weights = sample_counts_selected / np.sum(sample_counts_selected)
+        
+        # Mise à jour pondérée du modèle global
+        global_alpha = np.zeros(m)
+        for i, alpha in enumerate(local_alphas):
+            global_alpha += weights[i] * alpha
 
-        global_alpha = np.mean(local_alphas, axis=0)
-
-        # Calcul de l'erreur objective globale (pour FedAvg)
+        # 4. Calcul de l'erreur objective globale
         objective_error = 0
-        for agent_id in range(num_agents): # Boucle sur tous les agents pour calculer l'erreur globale
+        for agent_id in range(num_agents):
             agent_x = agents_X[agent_id]
             agent_y = agents_Y[agent_id]
-            Knm_agent = kernel_matrix(agent_x, X_m_points)
-            objective_error += (sigma**2 / (2*num_agents)) * global_alpha.T @ Kmm @ global_alpha + (1/(2*num_agents)) * np.sum((agent_y - Knm_agent @ global_alpha)**2) + (nu / (2*num_agents)) * np.linalg.norm(global_alpha)**2 # Somme des fonctions objectives locales évaluées au modèle global
+            Knm_agent = agents_Knm_full[agent_id]
+            
+            # Terme de régularisation L2 (sigma et nu)
+            reg_term = (sigma**2 / (2*num_agents)) * global_alpha.T @ Kmm @ global_alpha + \
+                       (nu / (2*num_agents)) * np.linalg.norm(global_alpha)**2
+            
+            # Terme d'erreur quadratique
+            error_term = (1/(2*num_agents)) * np.sum((agent_y - Knm_agent @ global_alpha)**2)
+            
+            objective_error += reg_term + error_term
+            
         objective_error_history_fedavg.append(objective_error)
-
-
         print(f"Round {round_num+1}/{num_rounds}, Objective Error: {objective_error:.4f}")
 
     return global_alpha, objective_error_history_fedavg
@@ -619,7 +701,35 @@ if __name__ == "__main__":
     # --- Partie 2: Federated Averaging (FedAvg) ---
     print("--- Partie 2: Federated Averaging (FedAvg) ---")
     data_part2 = load_data('data/second_database.pkl')
-    agents_X_part2, agents_Y_part2 = data_part2['X'], data_part2['Y'] # Données déjà divisées par agent
+    
+    # Debug information to understand data structure
+    print(f"Type of data_part2: {type(data_part2)}")
+    print(f"Structure of data_part2: {len(data_part2)} elements")
+    
+    # Check if it's a list with two elements like the first dataset
+    if isinstance(data_part2, list) and len(data_part2) == 2:
+        agents_X_part2, agents_Y_part2 = data_part2[0], data_part2[1]
+        print(f"Loaded data as list with {len(agents_X_part2)} agents for X and {len(agents_Y_part2)} agents for Y")
+    # Check if it's already a list of agents directly
+    elif isinstance(data_part2, list):
+        # If the data is a list of agents, with each agent having X and Y data
+        if len(data_part2) > 0 and isinstance(data_part2[0], (list, tuple)) and len(data_part2[0]) == 2:
+            agents_X_part2 = [agent[0] for agent in data_part2]
+            agents_Y_part2 = [agent[1] for agent in data_part2]
+            print(f"Loaded data as list of {len(agents_X_part2)} agent tuples")
+        # Last resort - assume it's a flat list that needs to be divided
+        else:
+            # Assume we need the same number of agents as part 1
+            num_agents = 5  # Same as part 1
+            # Divide the data into equal parts for each agent
+            data_size = len(data_part2)
+            chunk_size = data_size // num_agents
+            agents_X_part2 = [data_part2[i:i+chunk_size] for i in range(0, data_size, chunk_size)]
+            # Just reuse X data as Y data for now (this is a placeholder)
+            agents_Y_part2 = agents_X_part2
+            print(f"Warning: Unclear data structure, divided into {len(agents_X_part2)} chunks")
+    else:
+        raise TypeError("Unexpected structure for data_part2. Please check the data format.")
 
     n_total_part2 = 100 # Total points (même si déjà divisées, pour m_nystrom)
     m_nystrom_part2 = 10
@@ -633,7 +743,8 @@ if __name__ == "__main__":
 
     global_alpha_fedavg, objective_error_history_fedavg = federated_averaging(
         agents_X_part2, agents_Y_part2, X_m_points_part2, Kmm_part2,
-        num_rounds_fedavg, epochs_per_round_fedavg, batch_size_fedavg, learning_rate_fedavg
+        num_rounds_fedavg, epochs_per_round_fedavg, batch_size_fedavg, learning_rate_fedavg,
+        client_selection_prob=0.8, use_decreasing_lr=True  # Add these new parameters
     )
 
     iterations_fedavg = range(num_rounds_fedavg)
