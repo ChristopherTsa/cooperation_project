@@ -96,7 +96,7 @@ def plot_reconstruction_multi(x_prime, methods_alpha, X_m_points, y_nystrom, sel
     if selected_data is not None:
         x_selected, y_selected = selected_data
         plt.scatter(x_selected, y_selected, color='green', marker='o', label="100 points sélectionnés", alpha=0.5)
-    plt.title("Reconstruction Comparée des Méthodes")
+    plt.title("Reconstruction comparée des 4 méthodes")
     plt.xlabel("x")
     plt.ylabel("f(x)")
     plt.legend()
@@ -112,7 +112,7 @@ def plot_convergence_multi(iterations, convergence_data):
         plt.loglog(iterations, gap, label=f"{method_name}")
     plt.xlabel("Itérations")
     plt.ylabel("Optimality Gap")
-    plt.title("Convergence Comparée des Méthodes")
+    plt.title("Convergence comparée des 4 méthodes")
     plt.legend()
     plt.grid(True)
     plt.savefig("results/convergence/comparison_convergence.pdf")
@@ -390,7 +390,7 @@ def federated_averaging(
         if not selected_clients:
             selected_clients = [np.random.randint(0, num_agents)]
             
-        print(f"Round {round_num+1}/{num_rounds}, {len(selected_clients)}/{num_agents} clients sélectionnés")
+        #print(f"Round {round_num+1}/{num_rounds}, {len(selected_clients)}/{num_agents} clients sélectionnés")
         
         local_alphas = []
         sample_counts_selected = []
@@ -457,7 +457,7 @@ def federated_averaging(
             objective_error += reg_term + error_term
             
         objective_error_history_fedavg.append(objective_error)
-        print(f"Round {round_num+1}/{num_rounds}, Objective Error: {objective_error:.4f}")
+        #print(f"Round {round_num+1}/{num_rounds}, Objective Error: {objective_error:.4f}")
 
     return global_alpha, objective_error_history_fedavg
 
@@ -528,15 +528,19 @@ if __name__ == "__main__":
     #visualize_data(x_data, y_data)
     #print("Visualisation des données terminée. Graphique sauvegardé dans data_visualization.pdf")
 
-    print("--- 0.2. Sélection des points Nyström ---")
+    print("--- 0.2. Attribution des données aux agents ---")
     all_indices = list(range(n_total))
     np.random.shuffle(all_indices)
     agents_data_indices = [all_indices[i*points_per_agent:(i+1)*points_per_agent] for i in range(num_agents)]
+    print(f"Indices des données pour chaque agent:")
+    for (i, indices) in enumerate(agents_data_indices):
+        print(f"Agent {i}: {indices}")
     agents_x_data = [[x_data[i] for i in indices] for indices in agents_data_indices]
     agents_y_data = [[y_data[i] for i in indices] for indices in agents_data_indices]
 
     print("--- 0.3 Calcul de la solution centralisée ---")
     alpha_star_centralized, M_indices = solve(x_data[:n_total], y_data[:n_total], selection=True)
+    print(f"Indices des points sélectionnés pour l'approximation de Nyström: {M_indices}")
     X_m_points = [x_data[i] for i in M_indices]
     y_nystrom = [y_data[i] for i in M_indices]
     Kmm = kernel_matrix(X_m_points, X_m_points)
