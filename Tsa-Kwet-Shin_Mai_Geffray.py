@@ -1,3 +1,4 @@
+import math as m
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
@@ -561,9 +562,15 @@ def centralized_solution(Kmm, Knm, y, sigma, nu):
 
 # --- Partie Principale du Script ---
 if __name__ == "__main__":
-    print("--- Partie 1: Méthodes Distribuées Classiques (DGD, GT, DD, ADMM) ---")
-
-    # 1. Charger les données
+    print("--- 0. Préparation des données ---")
+    # Choisir n, m, a et diviser les données
+    n_total = 100
+    m_nystrom = m.ceil(m.sqrt(n_total))
+    num_agents = 5
+    nt = 250
+    points_per_agent = n_total // num_agents
+    
+    print("--- 0.1. Charger les données ---")
     data_part1 = load_data('data/first_database.pkl')
     x_data, y_data = data_part1[0], data_part1[1]
     print(f"Taille de x_data: {len(x_data)}")
@@ -573,26 +580,14 @@ if __name__ == "__main__":
     #visualize_data(x_data, y_data)
     #print("Visualisation des données terminée. Graphique sauvegardé dans data_visualization.pdf")
 
-    # 2. Choisir n, m, a et diviser les données
-    n_total = 100
-    m_nystrom = 10
-    num_agents = 5
-    nt = 250
-    points_per_agent = n_total // num_agents
-
-    #X_m_points, M_indices = nystrom_approximation(x_data[:n_total], m_nystrom)
-    #y_nystrom = [y_data[i] for i in M_indices]
-
-    agents_data_indices = [list(range(i*points_per_agent, (i+1)*points_per_agent)) for i in range(num_agents)]
+    print("--- 0.2. Sélection des points Nyström ---")
+    all_indices = list(range(n_total))
+    np.random.shuffle(all_indices)
+    agents_data_indices = [all_indices[i*points_per_agent:(i+1)*points_per_agent] for i in range(num_agents)]
     agents_x_data = [[x_data[i] for i in indices] for indices in agents_data_indices]
     agents_y_data = [[y_data[i] for i in indices] for indices in agents_data_indices]
 
-    #Kmm = kernel_matrix(X_m_points, X_m_points)
-
-    # --- Calcul de la solution centralisée ---
-    print("Calcul de la solution centralisée...")
-    #Knm_centralized = kernel_matrix(x_data[:n_total], X_m_points)
-    #alpha_star_centralized = centralized_solution(Kmm, Knm_centralized, y_data[:n_total], sigma, nu)
+    print("--- 0.3 Calcul de la solution centralisée ---")
     alpha_star_centralized, M_indices = solve(x_data[:n_total], y_data[:n_total], selection=True)
     X_m_points = [x_data[i] for i in M_indices]
     y_nystrom = [y_data[i] for i in M_indices]
@@ -601,9 +596,8 @@ if __name__ == "__main__":
     x_prime_grid = np.linspace(-1, 1, nt)
     #visualize_function(x_prime_grid, alpha_star_centralized, X_m_points, "Centralized",  y_nystrom,(x_data[:n_total], y_data[:n_total]))
 
-
-    # --- 1. Decentralized Gradient Descent (DGD) ---
-    print("--- Decentralized Gradient Descent (DGD) ---")
+    print("--- 1. Méthodes Distribuées Classiques (DGD, GT, DD, ADMM) ---")
+    print("--- 1.1 Decentralized Gradient Descent (DGD) ---")
     #communication_graph_dgd = nx.Graph()
     #communication_graph_dgd.add_nodes_from(range(num_agents))
     #communication_graph_dgd.add_edges_from([(i, (i+1)%num_agents) for i in range(num_agents)]) # Graphe en anneau
@@ -622,11 +616,9 @@ if __name__ == "__main__":
     avg_alpha_dgd = np.mean(agent_alphas_dgd, axis=0)
     #visualize_function(x_prime_grid, avg_alpha_dgd, X_m_points, "DGD", y_nystrom, (x_data[:n_total], y_data[:n_total]))
 
-
-    # --- 2. Gradient Tracking (GT) ---
-    print("--- Gradient Tracking (GT) ---")
+    print("--- 1.2 Gradient Tracking (GT) ---")
     communication_graph_gt = communication_graph_dgd.copy()
-    step_size_gt = 0.01 # Ajuster step size pour GT
+    step_size_gt = 0.01
     agent_alphas_gt, optimality_gap_history_gt = gradient_tracking(
         agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph_gt,
         step_size_gt, num_iterations_dgd, alpha_star_centralized # Réutiliser num_iterations_dgd
@@ -637,13 +629,9 @@ if __name__ == "__main__":
     avg_alpha_gt = np.mean(agent_alphas_gt, axis=0)
     #visualize_function(x_prime_grid, avg_alpha_gt, X_m_points, "GradientTracking",  y_nystrom, (x_data[:n_total], y_data[:n_total]))
 
-
-    # --- 3. Dual Decomposition (DD) ---
-    print("--- Dual Decomposition (DD) ---")
+    print("--- 1.3 Dual Decomposition (DD) ---")
     communication_graph_dd = communication_graph_dgd.copy()
-    #step_size_primal_dd = 0.01
     step_size_dual_dd = 0.1
-    #rho_dd = 0.1 # Paramètre de pénalité de l'ADMM, à ajuster
     agent_alphas_dd, optimality_gap_history_dd, z_global_dd = dual_decomposition(
         agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph_dd,
         step_size_dual_dd, num_iterations_dgd, alpha_star_centralized
@@ -653,26 +641,21 @@ if __name__ == "__main__":
     #plot_convergence(iterations_dd, optimality_gap_history_dd, "DualDecomposition")
     #visualize_function(x_prime_grid, z_global_dd, X_m_points, "DualDecomposition", y_nystrom, (x_data[:n_total], y_data[:n_total])) # Utiliser z_global pour visualiser
 
-
-    # --- 4. ADMM ---
-    print("--- ADMM ---")
+    print("--- 1.4 ADMM ---")
     communication_graph_admm = communication_graph_dgd.copy()
-    # Paramètre rho plus élevé pour ADMM
-    rho_admm = 1.0  # Beaucoup plus élevé que 0.0001 pour assurer la convergence
+    rho_admm = 1.0
     num_iterations_admm = num_iterations_dgd
     agent_alphas_admm, optimality_gap_history_admm, z_global_admm = admm(
         agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, rho_admm,
         num_iterations_admm, alpha_star_centralized
     )
 
-    # Debug - Print lengths for verification
     print(f"Lengths - DGD: {len(optimality_gap_history_dgd)}, GT: {len(optimality_gap_history_gt)}, DD: {len(optimality_gap_history_dd)}, ADMM: {len(optimality_gap_history_admm)}")
 
     iterations_admm = range(len(optimality_gap_history_admm))
     #plot_convergence(iterations_admm, optimality_gap_history_admm, "ADMM")
     #visualize_function(x_prime_grid, z_global_admm, X_m_points, "ADMM", y_nystrom, (x_data[:n_total], y_data[:n_total]))
     
-    # Ensure all methods have the same length for plotting
     min_length = min(len(optimality_gap_history_dgd), 
                     len(optimality_gap_history_gt),
                     len(optimality_gap_history_dd), 
@@ -687,7 +670,6 @@ if __name__ == "__main__":
     iterations = range(min_length)
     plot_convergence_multi(iterations, convergence_data)
 
-    # Add a combined plot of all methods
     print("Visualisation comparée de toutes les méthodes")
     methods_alpha = {
         "Centralized": alpha_star_centralized,
@@ -697,9 +679,8 @@ if __name__ == "__main__":
         "ADMM": z_global_admm
     }
     plot_reconstruction_multi(x_prime_grid, methods_alpha, X_m_points, y_nystrom, (x_data[:n_total], y_data[:n_total]))
-
-    # --- Partie 2: Federated Averaging (FedAvg) ---
-    print("--- Partie 2: Federated Averaging (FedAvg) ---")
+    
+    print("--- 2. Federated Averaging (FedAvg) ---")
     data_part2 = load_data('data/second_database.pkl')
     
     # Debug information to understand data structure
