@@ -2,7 +2,7 @@ import math as m
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
-import networkx as nx  # Pour les graphes de communication
+import networkx as nx
 from centralized_solution import solve
 
 # --- Paramètres Globaux ---
@@ -136,7 +136,7 @@ def plot_convergence_multi(iterations, convergence_data):
     plt.show()
 
 # --- Fonctions pour les Algorithmes Distribués ---
-
+# --- Algorithmes de la partie 1 ---
 def decentralized_gradient_descent(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph, step_size, num_iterations, alpha_star_centralized):
     """Implémentation de la Descente de Gradient Décentralisée (DGD)."""
     num_agents = len(agents_data_indices)
@@ -170,7 +170,6 @@ def decentralized_gradient_descent(agents_data_indices, agents_x_data, agents_y_
         #print(f"DGD - Iteration {iteration+1}/{num_iterations}, Optimality Gap: {optimality_gap:.6f}")
 
     return agent_alphas, optimality_gap_history_dgd
-
 
 def gradient_tracking(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph, step_size, num_iterations, alpha_star_centralized):
     """Implémentation améliorée de Gradient Tracking (GT) avec stabilité accrue."""
@@ -263,7 +262,6 @@ def gradient_tracking(agents_data_indices, agents_x_data, agents_y_data, X_m_poi
 
     return agent_alphas, optimality_gap_history_gt
 
-
 def dual_decomposition(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph, step_size_dual, num_iterations, alpha_star_centralized):
     """Implémentation standard de la Décomposition Duale (DD) avec une approche plus fondamentale."""
     num_agents = len(agents_data_indices)
@@ -314,7 +312,6 @@ def dual_decomposition(agents_data_indices, agents_x_data, agents_y_data, X_m_po
         optimality_gap_history_dd.append(optimality_gap)
     
     return agent_alphas, optimality_gap_history_dd, z_global
-
 
 def admm(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, rho, num_iterations, alpha_star_centralized):
     """
@@ -383,7 +380,7 @@ def admm(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, rho
     
     return alpha, optimality_gap_history_admm, np.mean(alpha, axis=0)
 
-
+# --- Algorithme de la partie 2 ---
 def federated_averaging(agents_X, agents_Y, X_m_points, Kmm, num_rounds, epochs_per_round, batch_size, learning_rate, client_selection_prob=1.0, use_decreasing_lr=False):
     """
     Implémentation améliorée de Federated Averaging (FedAvg).
@@ -511,6 +508,7 @@ def federated_averaging(agents_X, agents_Y, X_m_points, Kmm, num_rounds, epochs_
 
     return global_alpha, objective_error_history_fedavg
 
+# --- Algorithme de la partie 3 ---
 def dgd_dp(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph, step_size, num_iterations, alpha_star_centralized, noise_std):
     """Implémentation de DGD avec Privacité Différentielle (DGD-DP)."""
     num_agents = len(agents_data_indices)
@@ -551,14 +549,6 @@ def dgd_dp(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, c
         optimality_gap_history_dgd_dp.append(optimality_gap)
 
     return agent_alphas, optimality_gap_history_dgd_dp
-
-# --- Fonction pour résoudre le problème centralisé ---
-def centralized_solution(Kmm, Knm, y, sigma, nu):
-    """Calcule la solution centralisée pour comparer les méthodes distribuées."""
-    m = Kmm.shape[0]
-    alpha_star = np.linalg.solve(sigma**2 * Kmm + Knm.T @ Knm + nu * np.eye(m), Knm.T @ y)
-    return alpha_star
-
 
 # --- Partie Principale du Script ---
 if __name__ == "__main__":
