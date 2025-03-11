@@ -120,7 +120,16 @@ def plot_convergence_multi(iterations, convergence_data):
 
 # --- Fonctions pour les Algorithmes Distribués ---
 # --- Algorithmes de la partie 1 ---
-def decentralized_gradient_descent(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph, step_size, num_iterations, alpha_star_centralized):
+def decentralized_gradient_descent(
+    agents_data_indices,
+    agents_x_data,
+    agents_y_data,
+    X_m_points,
+    Kmm,
+    communication_graph,
+    step_size,
+    num_iterations,
+    alpha_star_centralized):
     """Implémentation de la Descente de Gradient Décentralisée (DGD)."""
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
@@ -154,7 +163,16 @@ def decentralized_gradient_descent(agents_data_indices, agents_x_data, agents_y_
 
     return agent_alphas, optimality_gap_history_dgd
 
-def gradient_tracking(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph, step_size, num_iterations, alpha_star_centralized):
+def gradient_tracking(
+    agents_data_indices,
+    agents_x_data,
+    agents_y_data,
+    X_m_points,
+    Kmm,
+    communication_graph,
+    step_size,
+    num_iterations,
+    alpha_star_centralized):
     """Implémentation du Gradient Tracking (GT)."""
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
@@ -234,7 +252,16 @@ def gradient_tracking(agents_data_indices, agents_x_data, agents_y_data, X_m_poi
 
     return agent_alphas, optimality_gap_history_gt
 
-def dual_decomposition(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph, step_size_dual, num_iterations, alpha_star_centralized):
+def dual_decomposition(
+    agents_data_indices,
+    agents_x_data,
+    agents_y_data,
+    X_m_points,
+    Kmm, 
+    communication_graph,
+    step_size_dual,
+    num_iterations,
+    alpha_star_centralized):
     """Implémentation de la Décomposition Duale (DD)."""
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
@@ -272,7 +299,15 @@ def dual_decomposition(agents_data_indices, agents_x_data, agents_y_data, X_m_po
     
     return agent_alphas, optimality_gap_history_dd, z_global
 
-def admm(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, rho, num_iterations, alpha_star_centralized):
+def admm(
+    agents_data_indices,
+    agents_x_data,
+    agents_y_data,
+    X_m_points,
+    Kmm,
+    rho,
+    num_iterations,
+    alpha_star_centralized):
     """Implémentation de l'ADMM."""
     import itertools
     num_agents = len(agents_data_indices)
@@ -326,7 +361,17 @@ def admm(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, rho
     return alpha, optimality_gap_history_admm, np.mean(alpha, axis=0)
 
 # --- Algorithme de la partie 2 ---
-def federated_averaging(agents_X, agents_Y, X_m_points, Kmm, num_rounds, epochs_per_round, batch_size, learning_rate, client_selection_prob=1.0, use_decreasing_lr=False):
+def federated_averaging(
+    agents_X,
+    agents_Y,
+    X_m_points,
+    Kmm,
+    num_rounds,
+    epochs_per_round,
+    batch_size,
+    learning_rate,
+    client_selection_prob=1.0,
+    use_decreasing_lr=False):
     """Implémentation de Federated Averaging (FedAvg)."""
     num_agents = len(agents_X)
     m = len(X_m_points)
@@ -417,7 +462,17 @@ def federated_averaging(agents_X, agents_Y, X_m_points, Kmm, num_rounds, epochs_
     return global_alpha, objective_error_history_fedavg
 
 # --- Algorithme de la partie 3 ---
-def dgd_dp(agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph, step_size, num_iterations, alpha_star_centralized, noise_std):
+def dgd_dp(
+    agents_data_indices,
+    agents_x_data,
+    agents_y_data,
+    X_m_points,
+    Kmm,
+    communication_graph,
+    step_size,
+    num_iterations,
+    alpha_star_centralized,
+    noise_std):
     """Implémentation de DGD avec Privacité Différentielle (DGD-DP)."""
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
@@ -488,6 +543,7 @@ if __name__ == "__main__":
     print("Solution centralisée calculée.")
     x_prime_grid = np.linspace(-1, 1, nt)
     #visualize_function(x_prime_grid, alpha_star_centralized, X_m_points, "Centralized",  y_nystrom,(x_data[:n_total], y_data[:n_total]))
+
 
     print("--- 1. Méthodes Distribuées Classiques (DGD, GT, DD, ADMM) ---")
     print("--- 1.1 Decentralized Gradient Descent (DGD) ---")
