@@ -49,6 +49,38 @@ def nystrom_approximation(X, m):
     M_indices = ind
     return X_selected, M_indices
 
+def create_weighted_graphs(num_agents):
+    """Crée différentes structures de graphes avec des poids appropriés pour les algorithmes décentralisés."""
+    graphs = []
+    graph_names = []
+    
+    # 1. Line Graph (Path Graph)
+    line_graph = nx.path_graph(num_agents)
+    graph_names.append("Line Graph")
+    graphs.append(line_graph)
+    
+    # 2. Small-world Graph (Watts-Strogatz)
+    # Each node connected to k nearest neighbors with probability p of rewiring edges
+    k = min(2, num_agents-1)
+    p = 0.3
+    small_world = nx.watts_strogatz_graph(num_agents, k, p)
+    graph_names.append("Small-world Graph")
+    graphs.append(small_world)
+    
+    # 3. Fully Connected Graph (Complete Graph)
+    fully_connected = nx.complete_graph(num_agents)
+    graph_names.append("Fully Connected Graph")
+    graphs.append(fully_connected)
+    
+    for graph in graphs:
+        for i in range(num_agents):
+            neighbors = list(graph.neighbors(i))
+            for j in neighbors:
+                weight = 1.0 / (max(graph.degree(i), graph.degree(j)) + 1)
+                graph[i][j]['weight'] = weight
+    
+    return graphs, graph_names
+
 # --- Fonctions de Visualisation ---
 def plot_convergence(iterations, optimality_gap, algorithm_name):
     """Affiche le graphique de convergence (optimality gap vs itérations)."""
@@ -129,7 +161,8 @@ def decentralized_gradient_descent(
     communication_graph,
     step_size,
     num_iterations,
-    alpha_star_centralized):
+    alpha_star_centralized,
+    verbose=False):
     """Implémentation de la Descente de Gradient Décentralisée (DGD)."""
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
@@ -137,10 +170,23 @@ def decentralized_gradient_descent(
     agents_Knm = []
     for agent_x in agents_x_data:
         agents_Knm.append(kernel_matrix(agent_x, X_m_points))
+    
+    W = np.zeros((num_agents, num_agents))
+    for i in range(num_agents):
+        neighbors = list(communication_graph.neighbors(i)) + [i]
+        for j in neighbors:
+            if 'weight' in communication_graph.get_edge_data(i, j, default={}):
+                W[i, j] = communication_graph.get_edge_data(i, j)['weight']
+            else:
+                W[i, j] = 1.0 / max(len(list(communication_graph.neighbors(i))), 
+                                   len(list(communication_graph.neighbors(j)))) + 1
+                print(f"Warning: No weight found for edge ({i}, {j}), using default value {W[i, j]}")
+        W[i] = W[i] / np.sum(W[i]) if np.sum(W[i]) > 0 else W[i]
 
     optimality_gap_history_dgd = []
 
-    for _ in range(num_iterations):
+    for iteration in range(num_iterations):
+        new_agent_alphas = [np.zeros(m) for _ in range(num_agents)]
         for agent_id in range(num_agents):
             Knm_agent = agents_Knm[agent_id]
             y_agent = agents_y_data[agent_id]
@@ -151,15 +197,15 @@ def decentralized_gradient_descent(
             alpha_avg = np.zeros(m)
             neighbors = list(communication_graph.neighbors(agent_id)) + [agent_id]
             for neighbor_id in neighbors:
-                alpha_avg += agent_alphas[neighbor_id]
-            alpha_avg /= len(neighbors)
-
-            agent_alphas[agent_id] = alpha_avg - step_size * grad_local
-
+                alpha_avg += W[agent_id, neighbor_id] * agent_alphas[neighbor_id]
+            new_agent_alphas[agent_id] = alpha_avg - step_size * grad_local
+            
+        agent_alphas = new_agent_alphas
         avg_alpha = np.mean(agent_alphas, axis=0)
         optimality_gap = np.linalg.norm(avg_alpha - alpha_star_centralized)
         optimality_gap_history_dgd.append(optimality_gap)
-        #print(f"DGD - Iteration {iteration+1}/{num_iterations}, Optimality Gap: {optimality_gap:.6f}")
+        if verbose:
+            print(f"DGD - Iteration {iteration+1}/{num_iterations}, Optimality Gap: {optimality_gap:.6f}")
 
     return agent_alphas, optimality_gap_history_dgd
 
@@ -172,12 +218,12 @@ def gradient_tracking(
     communication_graph,
     step_size,
     num_iterations,
-    alpha_star_centralized):
+    alpha_star_centralized,
+    verbose=False):
     """Implémentation du Gradient Tracking (GT)."""
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
     agent_alphas = [np.zeros(m) for _ in range(num_agents)]
-    agent_gradients = [np.zeros(m) for _ in range(num_agents)]
     agents_Knm = []
     for agent_x in agents_x_data:
         agents_Knm.append(kernel_matrix(agent_x, X_m_points))
@@ -186,71 +232,56 @@ def gradient_tracking(
     for i in range(num_agents):
         neighbors = list(communication_graph.neighbors(i)) + [i]
         for j in neighbors:
-            W[i, j] = 1.0 / len(neighbors)
-    
+            if 'weight' in communication_graph.get_edge_data(i, j, default={}):
+                W[i, j] = communication_graph.get_edge_data(i, j)['weight']
+            else:
+                W[i, j] = 1.0 / max(len(list(communication_graph.neighbors(i))), 
+                                   len(list(communication_graph.neighbors(j)))) + 1
+                print(f"Warning: No weight found for edge ({i}, {j}), using default value {W[i, j]}")
+        W[i] = W[i] / np.sum(W[i]) if np.sum(W[i]) > 0 else W[i]
+
+    agent_gradients = []
     for agent_id in range(num_agents):
         Knm_agent = agents_Knm[agent_id]
         y_agent = agents_y_data[agent_id]
         alpha_agent = agent_alphas[agent_id]
-        agent_gradients[agent_id] = (sigma**2 / num_agents) * Kmm @ alpha_agent - (Knm_agent.T @ (y_agent - Knm_agent @ alpha_agent)) + (nu / num_agents) * alpha_agent
+        grad_local = (sigma**2 / num_agents) * Kmm @ alpha_agent - (Knm_agent.T @ (y_agent - Knm_agent @ alpha_agent)) + (nu / num_agents) * alpha_agent
+        agent_gradients.append(grad_local)
     
-    optimality_gap_history_gt = []
-    current_step_size = step_size
-    clip_value = 10.0
-    
+    optimality_gap_history_dgt = []
+
     for iteration in range(num_iterations):
         new_agent_alphas = [np.zeros(m) for _ in range(num_agents)]
         new_agent_gradients = [np.zeros(m) for _ in range(num_agents)]
-        
-        if iteration > 0 and iteration % 200 == 0:
-            current_step_size *= 0.9
-        
         for agent_id in range(num_agents):
-            alpha_avg = np.zeros(m)
-            for neighbor_id in range(num_agents):
-                if W[agent_id, neighbor_id] > 0:
-                    alpha_avg += W[agent_id, neighbor_id] * agent_alphas[neighbor_id]
-            
             Knm_agent = agents_Knm[agent_id]
             y_agent = agents_y_data[agent_id]
-            current_grad_local = (sigma**2 / num_agents) * Kmm @ agent_alphas[agent_id] - (Knm_agent.T @ (y_agent - Knm_agent @ agent_alphas[agent_id])) + (nu / num_agents) * agent_alphas[agent_id]
+            alpha_agent = agent_alphas[agent_id]
+
+            alpha_avg = np.zeros(m)
+            grad_avg = np.zeros(m)
+            neighbors = list(communication_graph.neighbors(agent_id)) + [agent_id]
+            for neighbor_id in neighbors:
+                alpha_avg += W[agent_id, neighbor_id] * agent_alphas[neighbor_id]
+                grad_avg += W[agent_id, neighbor_id] * agent_gradients[neighbor_id]
             
-            norm_grad = np.linalg.norm(current_grad_local)
-            if norm_grad > clip_value:
-                current_grad_local = current_grad_local * (clip_value / norm_grad)
+            new_alpha_agent = alpha_avg - step_size * agent_gradients[agent_id]
+            new_agent_alphas[agent_id] = new_alpha_agent
             
-            gradient_avg = np.zeros(m)
-            for neighbor_id in range(num_agents):
-                if W[agent_id, neighbor_id] > 0:
-                    gradient_avg += W[agent_id, neighbor_id] * agent_gradients[neighbor_id]
+            grad_local = (sigma**2 / num_agents) * Kmm @ alpha_agent - (Knm_agent.T @ (y_agent - Knm_agent @ alpha_agent)) + (nu / num_agents) * alpha_agent
+            new_grad_local = (sigma**2 / num_agents) * Kmm @ new_alpha_agent - (Knm_agent.T @ (y_agent - Knm_agent @ new_alpha_agent)) + (nu / num_agents) * new_alpha_agent
             
-            new_agent_alphas[agent_id] = alpha_avg - current_step_size * agent_gradients[agent_id]
-            new_agent_gradients[agent_id] = gradient_avg + (current_grad_local - agent_gradients[agent_id])
-        
-        max_alpha_norm = max([np.linalg.norm(alpha) for alpha in new_agent_alphas])
-        if np.isnan(max_alpha_norm) or max_alpha_norm > 1e6:
-            print(f"Warning: GT diverged at iteration {iteration}. Reducing step size and continuing...")
-            current_step_size *= 0.1
-            for agent_id in range(num_agents):
-                new_agent_alphas[agent_id] = agent_alphas[agent_id]
-                alpha_avg = np.zeros(m)
-                for neighbor_id in range(num_agents):
-                    if W[agent_id, neighbor_id] > 0:
-                        alpha_avg += W[agent_id, neighbor_id] * agent_alphas[neighbor_id]
-                new_agent_alphas[agent_id] = alpha_avg - current_step_size * agent_gradients[agent_id]
-        
+            new_agent_gradients[agent_id] = grad_avg + (new_grad_local - grad_local)
+
         agent_alphas = new_agent_alphas
         agent_gradients = new_agent_gradients
-        
         avg_alpha = np.mean(agent_alphas, axis=0)
         optimality_gap = np.linalg.norm(avg_alpha - alpha_star_centralized)
-        optimality_gap_history_gt.append(optimality_gap)
-        
-        if iteration > 10 and optimality_gap < 1e-6:
-            print(f"GT converged at iteration {iteration} with gap: {optimality_gap:.6f}")
-            break
+        optimality_gap_history_dgt.append(optimality_gap)
+        if verbose:
+            print(f"DGT - Iteration {iteration+1}/{num_iterations}, Optimality Gap: {optimality_gap:.6f}")
 
-    return agent_alphas, optimality_gap_history_gt
+    return agent_alphas, optimality_gap_history_dgt
 
 def dual_decomposition(
     agents_data_indices,
@@ -508,7 +539,7 @@ def dgd_dp(
 
     return agent_alphas, optimality_gap_history_dgd_dp
 
-# --- Partie Principale du Script ---
+# --- Partie principale du script ---
 if __name__ == "__main__":
     print("--- 0. Préparation des données ---")
     # Choisir n, m, a et diviser les données
@@ -550,89 +581,115 @@ if __name__ == "__main__":
 
 
     print("--- 1. Méthodes Distribuées Classiques (DGD, GT, DD, ADMM) ---")
-    print("--- 1.1 Decentralized Gradient Descent (DGD) ---")
-    #communication_graph_dgd = nx.Graph()
-    #communication_graph_dgd.add_nodes_from(range(num_agents))
-    #communication_graph_dgd.add_edges_from([(i, (i+1)%num_agents) for i in range(num_agents)]) # Graphe en anneau
-    communication_graph_dgd = nx.complete_graph(num_agents)
+    num_iterations = 1000
     
-    step_size_dgd = 0.01
-    num_iterations_dgd = 1000
-
-    agent_alphas_dgd, optimality_gap_history_dgd = decentralized_gradient_descent(
-        agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph_dgd,
-        step_size_dgd, num_iterations_dgd, alpha_star_centralized
-    )
-
-    iterations_dgd = range(num_iterations_dgd)
-    #plot_convergence(iterations_dgd, optimality_gap_history_dgd, "DGD")
-    avg_alpha_dgd = np.mean(agent_alphas_dgd, axis=0)
-    #visualize_function(x_prime_grid, avg_alpha_dgd, X_m_points, "DGD", y_nystrom, (x_data[:n_total], y_data[:n_total]))
-
-    print("--- 1.2 Gradient Tracking (GT) ---")
-    communication_graph_gt = communication_graph_dgd.copy()
-    step_size_gt = 0.01
-    agent_alphas_gt, optimality_gap_history_gt = gradient_tracking(
-        agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph_gt,
-        step_size_gt, num_iterations_dgd, alpha_star_centralized # Réutiliser num_iterations_dgd
-    )
-
-    iterations_gt = range(num_iterations_dgd)
-    #plot_convergence(iterations_gt, optimality_gap_history_gt, "GradientTracking")
-    avg_alpha_gt = np.mean(agent_alphas_gt, axis=0)
-    #visualize_function(x_prime_grid, avg_alpha_gt, X_m_points, "GradientTracking",  y_nystrom, (x_data[:n_total], y_data[:n_total]))
-
-    print("--- 1.3 Dual Decomposition (DD) ---")
-    communication_graph_dd = communication_graph_dgd.copy()
-    step_size_dual_dd = 0.1
-    agent_alphas_dd, optimality_gap_history_dd, z_global_dd = dual_decomposition(
-        agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph_dd,
-        step_size_dual_dd, num_iterations_dgd, alpha_star_centralized
-    )
+    print("--- 1.0 Initialisation du graphe de communication ---")
+    graphs, graph_names = create_weighted_graphs(num_agents)
+    #results_by_graph = {}
     
-    iterations_dd = range(num_iterations_dgd)
-    #plot_convergence(iterations_dd, optimality_gap_history_dd, "DualDecomposition")
-    #visualize_function(x_prime_grid, z_global_dd, X_m_points, "DualDecomposition", y_nystrom, (x_data[:n_total], y_data[:n_total])) # Utiliser z_global pour visualiser
+    for graph_idx, (graph, graph_name) in enumerate(zip(graphs, graph_names)):
+        communication_graph = graph
+        
+        print("--- 1.1 Decentralized Gradient Descent (DGD) ---")
+        step_size_dgd = 0.01
+        agent_alphas_dgd, optimality_gap_history_dgd = decentralized_gradient_descent(
+            agents_data_indices,
+            agents_x_data,
+            agents_y_data,
+            X_m_points,
+            Kmm,
+            communication_graph,
+            step_size_dgd,
+            num_iterations,
+            alpha_star_centralized,
+            verbose=False
+        )
+        #iterations_dgd = range(num_iterations)
+        #plot_convergence(iterations_dgd, optimality_gap_history_dgd, "DGD")
+        avg_alpha_dgd = np.mean(agent_alphas_dgd, axis=0)
+        #visualize_function(x_prime_grid, avg_alpha_dgd, X_m_points, "DGD", y_nystrom, (x_data[:n_total], y_data[:n_total]))
 
-    print("--- 1.4 ADMM ---")
-    communication_graph_admm = communication_graph_dgd.copy()
-    rho_admm = 1.0
-    num_iterations_admm = num_iterations_dgd
-    agent_alphas_admm, optimality_gap_history_admm, z_global_admm = admm(
-        agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, rho_admm,
-        num_iterations_admm, alpha_star_centralized
-    )
+        print("--- 1.2 Gradient Tracking (GT) ---")
+        step_size_gt = 0.01
+        agent_alphas_gt, optimality_gap_history_gt = gradient_tracking(
+            agents_data_indices,
+            agents_x_data,
+            agents_y_data,
+            X_m_points,
+            Kmm,
+            communication_graph,
+            step_size_gt,
+            num_iterations,
+            alpha_star_centralized,
+            verbose=False
+        )
+        #iterations_gt = range(num_iterations)
+        #plot_convergence(iterations_gt, optimality_gap_history_gt, "GradientTracking")
+        avg_alpha_gt = np.mean(agent_alphas_gt, axis=0)
+        #visualize_function(x_prime_grid, avg_alpha_gt, X_m_points, "GradientTracking",  y_nystrom, (x_data[:n_total], y_data[:n_total]))
 
-    print(f"Lengths - DGD: {len(optimality_gap_history_dgd)}, GT: {len(optimality_gap_history_gt)}, DD: {len(optimality_gap_history_dd)}, ADMM: {len(optimality_gap_history_admm)}")
+        print("--- 1.3 Dual Decomposition (DD) ---")
+        step_size_dual_dd = 0.1
+        agent_alphas_dd, optimality_gap_history_dd, z_global_dd = dual_decomposition(
+            agents_data_indices,
+            agents_x_data,
+            agents_y_data,
+            X_m_points,
+            Kmm,
+            communication_graph,
+            step_size_dual_dd,
+            num_iterations,
+            alpha_star_centralized,
+            #verbose=False
+        )
+        #iterations_dd = range(num_iterations)
+        #plot_convergence(iterations_dd, optimality_gap_history_dd, "DualDecomposition")
+        #avg_alpha_dd = np.mean(agent_alphas_dd, axis=0)
+        #visualize_function(x_prime_grid, z_global_dd, X_m_points, "DualDecomposition", y_nystrom, (x_data[:n_total], y_data[:n_total])) # Utiliser z_global pour visualiser
 
-    iterations_admm = range(len(optimality_gap_history_admm))
-    #plot_convergence(iterations_admm, optimality_gap_history_admm, "ADMM")
-    #visualize_function(x_prime_grid, z_global_admm, X_m_points, "ADMM", y_nystrom, (x_data[:n_total], y_data[:n_total]))
-    
-    min_length = min(len(optimality_gap_history_dgd), 
-                    len(optimality_gap_history_gt),
-                    len(optimality_gap_history_dd), 
-                    len(optimality_gap_history_admm))
-                    
-    convergence_data = {
-        "DGD": optimality_gap_history_dgd[:min_length],
-        "GradientTracking": optimality_gap_history_gt[:min_length],
-        "DualDecomposition": optimality_gap_history_dd[:min_length],
-        "ADMM": optimality_gap_history_admm[:min_length]
-    }
-    iterations = range(min_length)
-    plot_convergence_multi(iterations, convergence_data)
+        print("--- 1.4 ADMM ---")
+        rho_admm = 1.0
+        agent_alphas_admm, optimality_gap_history_admm, z_global_admm = admm(
+            agents_data_indices,
+            agents_x_data,
+            agents_y_data,
+            X_m_points,
+            Kmm,
+            rho_admm,
+            num_iterations,
+            alpha_star_centralized,
+            #verbose=False
+        )
+        #iterations_admm = range(len(optimality_gap_history_admm))
+        #plot_convergence(iterations_admm, optimality_gap_history_admm, "ADMM")
+        #avg_alpha_admm = np.mean(agent_alphas_admm, axis=0)
+        #visualize_function(x_prime_grid, z_global_admm, X_m_points, "ADMM", y_nystrom, (x_data[:n_total], y_data[:n_total]))
+        
+        print(f"Lengths - DGD: {len(optimality_gap_history_dgd)}, GT: {len(optimality_gap_history_gt)}, DD: {len(optimality_gap_history_dd)}, ADMM: {len(optimality_gap_history_admm)}")
+        
+        min_length = min(len(optimality_gap_history_dgd), 
+                        len(optimality_gap_history_gt),
+                        len(optimality_gap_history_dd), 
+                        len(optimality_gap_history_admm))
+                        
+        convergence_data = {
+            "DGD": optimality_gap_history_dgd[:min_length],
+            "GradientTracking": optimality_gap_history_gt[:min_length],
+            "DualDecomposition": optimality_gap_history_dd[:min_length],
+            "ADMM": optimality_gap_history_admm[:min_length]
+        }
+        iterations = range(min_length)
+        plot_convergence_multi(iterations, convergence_data)
 
-    print("Visualisation comparée de toutes les méthodes")
-    methods_alpha = {
-        "Centralized": alpha_star_centralized,
-        "DGD": avg_alpha_dgd,
-        "GradientTracking": avg_alpha_gt,
-        "DualDecomposition": z_global_dd,
-        "ADMM": z_global_admm
-    }
-    plot_reconstruction_multi(x_prime_grid, methods_alpha, X_m_points, y_nystrom, (x_data[:n_total], y_data[:n_total]))
-    
+        print("Visualisation comparée de toutes les méthodes")
+        methods_alpha = {
+            "Centralized": alpha_star_centralized,
+            "DGD": avg_alpha_dgd,
+            "GradientTracking": avg_alpha_gt,
+            "DualDecomposition": z_global_dd,
+            "ADMM": z_global_admm
+        }
+        plot_reconstruction_multi(x_prime_grid, methods_alpha, X_m_points, y_nystrom, (x_data[:n_total], y_data[:n_total]))
     
     
     print("--- 2. Federated Averaging (FedAvg) ---")
