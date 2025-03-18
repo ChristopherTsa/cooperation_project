@@ -290,45 +290,72 @@ def dual_decomposition(
     X_m_points,
     Kmm, 
     communication_graph,
-    step_size_dual,
+    step_size,
     num_iterations,
-    alpha_star_centralized):
-    """Implémentation de la Décomposition Duale (DD)."""
+    alpha_star_centralized,
+    verbose=False):
+    """Implémentation de la Décomposition Duale (DD) pair à pair."""
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
-    
     agent_alphas = [np.zeros(m) for _ in range(num_agents)]
-    agent_lambdas = [np.zeros(m) for _ in range(num_agents)]
+    
+    lambdas = {}
+    for i in range(num_agents):
+        for j in list(communication_graph.neighbors(i)):
+            if j < i:
+                lambdas[(i,j)] = np.zeros(m)
     
     agents_Knm = []
     for agent_x in agents_x_data:
         agents_Knm.append(kernel_matrix(agent_x, X_m_points))
-
-    optimality_gap_history_dd = []
     
-    agents_hessian_inv = []
+    agents_H = []
+    agents_b = []
     for agent_id in range(num_agents):
         Knm = agents_Knm[agent_id]
-        hessian = Knm.T @ Knm + (nu/num_agents) * np.eye(m) + (sigma**2/num_agents) * Kmm
-        agents_hessian_inv.append(np.linalg.inv(hessian))
+        y_agent = agents_y_data[agent_id]
+        
+        # Calcul de H_i
+        H_i = (sigma**2 / 5) * Kmm + (nu / 10) * np.eye(m)
+        for i in range(len(y_agent)):
+            K_im = Knm[i, :].reshape(-1, 1)
+            H_i += K_im @ K_im.T
+        
+        agents_H.append(H_i)
+        agents_b.append(Knm.T @ y_agent)
     
-    for _ in range(num_iterations):
+    optimality_gap_history_dd = []
+    
+    for iteration in range(num_iterations):
         for agent_id in range(num_agents):
-            Knm = agents_Knm[agent_id]
-            y_agent = agents_y_data[agent_id]
-            rhs = Knm.T @ y_agent + agent_lambdas[agent_id]
-            agent_alphas[agent_id] = agents_hessian_inv[agent_id] @ rhs
+            dual_term = np.zeros(m)
+            for neighbor_id in list(communication_graph.neighbors(agent_id)):
+                if neighbor_id < agent_id:
+                    dual_term += lambdas[(agent_id, neighbor_id)]
+                else:
+                    dual_term -= lambdas[(neighbor_id, agent_id)]
+            
+            agent_alphas[agent_id] = np.linalg.solve(agents_H[agent_id], agents_b[agent_id] - dual_term)
         
-        z_global = np.mean(agent_alphas, axis=0)
+        for i in range(num_agents):
+            for j in list(communication_graph.neighbors(i)):
+                if j < i:
+                    lambdas[(i,j)] = lambdas[(i,j)] + step_size * (agent_alphas[i] - agent_alphas[j])
         
-        for agent_id in range(num_agents):
-            agent_lambdas[agent_id] = agent_lambdas[agent_id] - step_size_dual * (agent_alphas[agent_id] - z_global)
+        consensus_error = 0
+        for i in range(num_agents):
+            for j in list(communication_graph.neighbors(i)):
+                if j < i:
+                    consensus_error += np.linalg.norm(agent_alphas[i] - agent_alphas[j])
         
         avg_alpha = np.mean(agent_alphas, axis=0)
         optimality_gap = np.linalg.norm(avg_alpha - alpha_star_centralized)
         optimality_gap_history_dd.append(optimality_gap)
+        
+        if verbose:
+            print(f"DD - Iteration {iteration}/{num_iterations}, Optimality Gap: {optimality_gap:.6f}")
     
-    return agent_alphas, optimality_gap_history_dd, z_global
+    return agent_alphas, optimality_gap_history_dd, avg_alpha
 
 def admm(
     agents_data_indices,
@@ -581,7 +608,7 @@ if __name__ == "__main__":
 
 
     print("--- 1. Méthodes Distribuées Classiques (DGD, GT, DD, ADMM) ---")
-    num_iterations = 1000
+    num_iterations = 10000
     
     print("--- 1.0 Initialisation du graphe de communication ---")
     graphs, graph_names = create_weighted_graphs(num_agents)
@@ -629,7 +656,7 @@ if __name__ == "__main__":
         #visualize_function(x_prime_grid, avg_alpha_gt, X_m_points, "GradientTracking",  y_nystrom, (x_data[:n_total], y_data[:n_total]))
 
         print("--- 1.3 Dual Decomposition (DD) ---")
-        step_size_dual_dd = 0.1
+        step_size_dd = 0.01
         agent_alphas_dd, optimality_gap_history_dd, z_global_dd = dual_decomposition(
             agents_data_indices,
             agents_x_data,
@@ -637,10 +664,10 @@ if __name__ == "__main__":
             X_m_points,
             Kmm,
             communication_graph,
-            step_size_dual_dd,
+            step_size_dd,
             num_iterations,
             alpha_star_centralized,
-            #verbose=False
+            verbose=False
         )
         #iterations_dd = range(num_iterations)
         #plot_convergence(iterations_dd, optimality_gap_history_dd, "DualDecomposition")
@@ -748,7 +775,7 @@ if __name__ == "__main__":
 
 
     print("--- 3. DGD-DP ---")
-    communication_graph_dp = communication_graph_dgd.copy() # Réutiliser le graphe de DGD
+    communication_graph_dp = communication_graph.copy() # Réutiliser le graphe de DGD
     step_size_dgd_dp = 0.01
     num_iterations_dgd_dp = 1000
     noise_std_dp = 0.1 # Écart-type du bruit gaussien - à calibrer pour epsilon
