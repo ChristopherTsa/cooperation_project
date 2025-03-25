@@ -304,6 +304,8 @@ def dual_decomposition(
         for j in list(communication_graph.neighbors(i)):
             if j < i:
                 lambdas[(i,j)] = np.zeros(m)
+            if j > i:
+                lambdas[(j,i)] = np.zeros(m)
     
     agents_Knm = []
     for agent_x in agents_x_data:
@@ -316,7 +318,7 @@ def dual_decomposition(
         y_agent = agents_y_data[agent_id]
         
         # Calcul de H_i
-        H_i = (sigma**2 / 5) * Kmm + (nu / 10) * np.eye(m)
+        H_i = (sigma**2 / num_agents) * Kmm + (nu / num_agents) * np.eye(m)
         for i in range(len(y_agent)):
             K_im = Knm[i, :].reshape(-1, 1)
             H_i += K_im @ K_im.T
