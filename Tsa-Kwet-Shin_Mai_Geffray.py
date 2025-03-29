@@ -174,7 +174,7 @@ def dual_decomposition(agents_data_indices, agents_x_data, agents_y_data, X_m_po
             Knm_agent = agents_Knm[agent_id]
             y_agent = agents_y_data[agent_id]
             lambda_agent = agent_lambdas[agent_id]
-            alpha_agent_prev = agent_alphas[agent_id] # Pour la mise à jour de lambda
+            alpha_agent_prev = agent_alphas[agent_id] # Pour la mise à jour de lambda ##inutil ?
 
             # Gradient de la fonction augmentée de Lagrange (par rapport à alpha_agent)
             grad_L_alpha = (sigma**2 / num_agents) * Kmm @ agent_alphas[agent_id] - (Knm_agent.T @ (y_agent - Knm_agent @ agent_alphas[agent_id])) + (nu / num_agents) * agent_alphas[agent_id] - lambda_agent + rho * (agent_alphas[agent_id] - z_global)
@@ -438,7 +438,7 @@ if __name__ == "__main__":
     plot_convergence(iterations_admm, optimality_gap_history_admm, "ADMM")
     visualize_function(x_prime_grid, z_global_admm, X_m_points, "ADMM") # Utiliser z_global pour visualiser
 
-
+""" 
     # --- Partie 2: Federated Averaging (FedAvg) ---
     print("--- Partie 2: Federated Averaging (FedAvg) ---")
     data_part2 = load_data('data/second_database.pkl')
@@ -481,6 +481,6 @@ if __name__ == "__main__":
     plot_convergence(iterations_dgd_dp, optimality_gap_history_dgd_dp, "DGD_DP")
     avg_alpha_dgd_dp = np.mean(agent_alphas_dgd_dp, axis=0)
     visualize_function(x_prime_grid, avg_alpha_dgd_dp, X_m_points, "DGD_DP")
+ """
 
-
-    print("--- Fin du script principal ---")
+    #print("--- Fin du script principal ---")
