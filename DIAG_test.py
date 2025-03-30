@@ -1,11 +1,10 @@
 import numpy as np
-# Importer les fonctions et constantes depuis le module de votre script existant.
-# Assurez-vous que le fichier est renommé en un nom valide (ici TsaKwetShinMaiGeffray.py).
+
 from TsaKwetShinMaiGeffray import kernel_matrix, plot_convergence, visualize_function
 
 
-sigma = 1 # Variance du bruit
-nu = 0.01    # Paramètre de régularisation
+sigma = 0.5 # Variance du bruit
+nu = 1  # Paramètre de régularisation
 
 def diag_incremental(x_data, y_data, X_m_points, Kmm, num_iterations, step_size, alpha_star_centralized=None, verbose=False):
     """
@@ -101,19 +100,19 @@ def diag_incremental(x_data, y_data, X_m_points, Kmm, num_iterations, step_size,
     
     return alpha, optimality_gap_history
 
-# --- Exemple d'utilisation avec calcul de ε = 2/(μ+L) ---
+
 if __name__ == "__main__":
-    # Importer les fonctions nécessaires depuis TsaKwetShinMaiGeffray.py
+   
     from TsaKwetShinMaiGeffray import load_data, visualize_data, plot_convergence, visualize_function, solve
     
     # Paramètres pour l'exemple
     n_total = 100
     nt = 250
-    # Charger les données (vérifiez que le chemin est correct)
+   
     data = load_data('data/first_database.pkl')
     x_data, y_data = data[0], data[1]
     
-    # Calcul de l'approximation de Nyström (nombre de points sélectionnés m_nystrom)
+    # Calcul de l'approximation de Nyström
     import math as m
     m_nystrom = m.ceil(m.sqrt(n_total))
     sel = list(range(n_total))
@@ -128,18 +127,18 @@ if __name__ == "__main__":
     # Calcul de la matrice K_nm pour déterminer μ et L
     Knm = kernel_matrix(x_data[:n_total], X_m_points)
     m_dim = len(X_m_points)
-    # La Hessienne H est donnée par : H = sigma^2*Kmm + K_nm^T*K_nm + nu*I
+    # La Hessienne H = sigma^2*Kmm + K_nm^T*K_nm + nu*I
     H = sigma**2 * Kmm + np.dot(Knm.T, Knm) + nu * np.eye(m_dim)
     eigvals = np.linalg.eigvals(H)
     mu = np.min(eigvals.real)
     L = np.max(eigvals.real)
-    epsilon = 2 / (mu + L)
+    epsilon = 0.1
     print("Calculated mu =", mu)
     print("Calculated L =", L)
     print("Step size (epsilon) set to 2/(mu+L) =", epsilon)
     
-    num_iterations_diag = 10000
-    step_size_diag = epsilon  # Utiliser epsilon calculé
+    num_iterations_diag = 100000
+    step_size_diag = epsilon  
     
     print("--- Exécution de DIAG avec tests de débogage ---")
     alpha_diag, gap_history_diag = diag_incremental(
@@ -154,9 +153,9 @@ if __name__ == "__main__":
     )
     
     iterations_diag = range(num_iterations_diag)
-    # Affichage de la convergence
+    
     plot_convergence(iterations_diag, gap_history_diag, "DIAG")
-    # Visualisation de la fonction apprise sur une grille
+    
     x_prime_grid = np.linspace(-1, 1, nt)
     visualize_function(x_prime_grid, alpha_diag, X_m_points, "DIAG", y_nystrom, (x_data[:n_total], y_data[:n_total]))
     
