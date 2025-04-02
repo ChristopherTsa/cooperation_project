@@ -25,7 +25,7 @@ def visualize_data(x_data, y_data):
     plt.title("Visualisation des données chargées")
     plt.legend()
     plt.grid(True)
-    plt.savefig("results/data_visualization.pdf")
+    plt.savefig("results/data_visualization.png")
     plt.show()
 
 def euclidean_kernel(x, xi):
@@ -103,7 +103,7 @@ def plot_convergence(iterations, optimality_gap, algorithm_name):
     plt.ylabel("Optimality Gap (||alpha_t - alpha*||)")
     plt.title(f"Convergence de {algorithm_name}")
     plt.grid(True)
-    plt.savefig(f"results/convergence/convergence_{algorithm_name}.pdf")
+    plt.savefig(f"results/convergence/convergence_{algorithm_name}.png")
     plt.show()
 
 def visualize_function(x_prime, alpha, X_m_points, algorithm_name, y_nystrom, selected_data=None):
@@ -125,7 +125,7 @@ def visualize_function(x_prime, alpha, X_m_points, algorithm_name, y_nystrom, se
     plt.ylabel("f(x)")
     plt.legend()
     plt.grid(True)
-    plt.savefig(f"results/learned_function/learned_fonction_{algorithm_name}.pdf")
+    plt.savefig(f"results/learned_function/learned_fonction_{algorithm_name}.png")
     plt.show()
 
 def plot_reconstruction_multi(x_prime, methods_alpha, X_m_points, y_nystrom, selected_data=None):
@@ -146,7 +146,7 @@ def plot_reconstruction_multi(x_prime, methods_alpha, X_m_points, y_nystrom, sel
     plt.ylabel("f(x)")
     plt.legend()
     plt.grid(True)
-    plt.savefig("results/learned_function/comparison_reconstruction.pdf")
+    plt.savefig("results/learned_function/comparison_reconstruction.png")
     plt.show()
 
 def plot_convergence_multi(iterations, convergence_data):
@@ -160,7 +160,7 @@ def plot_convergence_multi(iterations, convergence_data):
     plt.title("Convergence comparée des 4 méthodes")
     plt.legend()
     plt.grid(True)
-    plt.savefig("results/convergence/comparison_convergence.pdf")
+    plt.savefig("results/convergence/comparison_convergence.png")
     plt.show()
 
 def plot_convergence_by_agent(iterations, optimality_gap_by_agent, algorithm_name, communication_graph=None, step_size=None):
@@ -228,7 +228,7 @@ def plot_convergence_by_agent(iterations, optimality_gap_by_agent, algorithm_nam
             transform=ax.transAxes, ha='right')
     
     #plt.tight_layout()
-    plt.savefig(f"results/convergence/convergence_by_agent_{algorithm_name}.pdf")
+    plt.savefig(f"results/convergence/convergence_by_agent_{algorithm_name}.png")
     plt.show()
 
 def plot_convergence_agents_multi(iterations, methods_convergence_data):
@@ -267,7 +267,7 @@ def plot_convergence_agents_multi(iterations, methods_convergence_data):
     plt.title("Convergence by agent for all methods")
     plt.legend()
     plt.grid(True)
-    plt.savefig("results/convergence/comparison_convergence_by_agent.pdf")
+    plt.savefig("results/convergence/comparison_convergence_by_agent.png")
     plt.show()
 
 def plot_convergence_by_epsilon(iterations, optimality_gap_by_agent_by_epsilon, algorithm_name):
@@ -307,7 +307,7 @@ def plot_convergence_by_epsilon(iterations, optimality_gap_by_agent_by_epsilon, 
     plt.title(f"Convergence by agent for {algorithm_name} with different privacy levels")
     plt.legend()
     plt.grid(True)
-    plt.savefig(f"results/convergence/convergence_by_agent_{algorithm_name}_multi_epsilon.pdf")
+    plt.savefig(f"results/convergence/convergence_by_agent_{algorithm_name}_multi_epsilon.png")
     plt.show()
 
 # --- Algorithmes de la partie 1 ---
@@ -782,7 +782,7 @@ if __name__ == "__main__":
     # --- Visualisation des données ---
     #print("Visualisation des données...")
     #visualize_data(x_data, y_data)
-    #print("Visualisation des données terminée. Graphique sauvegardé dans data_visualization.pdf")
+    #print("Visualisation des données terminée. Graphique sauvegardé dans data_visualization.png")
 
     print("--- 0.2. Attribution des données aux agents ---")
     all_indices = list(range(n_total))
@@ -832,7 +832,7 @@ if __name__ == "__main__":
         )
         iterations_dgd = range(num_iterations)
         # Afficher la convergence par agent pour DGD
-        #plot_convergence_by_agent(iterations_dgd, optimality_gap_by_agent_dgd, "DGD", graph, step_size_dgd)
+        plot_convergence_by_agent(iterations_dgd, optimality_gap_by_agent_dgd, "DGD", graph, step_size_dgd)
         avg_alpha_dgd = np.mean(agent_alphas_dgd, axis=0)
 
         print("--- 1.2 Gradient Tracking (GT) ---")
@@ -851,11 +851,11 @@ if __name__ == "__main__":
         )
         iterations_gt = range(num_iterations)
         # Afficher la convergence par agent pour GT
-        #plot_convergence_by_agent(iterations_gt, optimality_gap_by_agent_gt, "GradientTracking", graph, step_size_gt)
+        plot_convergence_by_agent(iterations_gt, optimality_gap_by_agent_gt, "GradientTracking", graph, step_size_gt)
         avg_alpha_gt = np.mean(agent_alphas_gt, axis=0)
 
         print("--- 1.3 Dual Decomposition (DD) ---")
-        step_size_dd = 0.1
+        step_size_dd = 0.01
         agent_alphas_dd, optimality_gap_history_dd, optimality_gap_by_agent_dd = dual_decomposition(
             agents_data_indices,
             agents_x_data,
@@ -870,7 +870,7 @@ if __name__ == "__main__":
         )
         iterations_dd = range(num_iterations)
         # Afficher la convergence par agent pour DD
-        #plot_convergence_by_agent(iterations_dd, optimality_gap_by_agent_dd, "DualDecomposition", graph, step_size_dd)
+        plot_convergence_by_agent(iterations_dd, optimality_gap_by_agent_dd, "DualDecomposition", graph, step_size_dd)
         avg_alpha_dd = np.mean(agent_alphas_dd, axis=0)
 
         print("--- 1.4 ADMM ---")
