@@ -270,7 +270,46 @@ def plot_convergence_agents_multi(iterations, methods_convergence_data):
     plt.savefig("results/convergence/comparison_convergence_by_agent.pdf")
     plt.show()
 
-# --- Fonctions pour les Algorithmes Distribués ---
+def plot_convergence_by_epsilon(iterations, optimality_gap_by_agent_by_epsilon, algorithm_name):
+    """
+    Affiche les courbes de convergence pour chaque agent pour différentes valeurs d'epsilon.
+    
+    Parameters:
+    - iterations: L'axe x (numéros d'itération)
+    - optimality_gap_by_agent_by_epsilon: Un dictionnaire où chaque clé est une valeur d'epsilon
+      et chaque valeur est une liste des historiques d'optimality gap pour chaque agent
+    - algorithm_name: Le nom de l'algorithme
+    """
+    plt.figure(figsize=(12, 8))
+    
+    # Définir une palette de couleurs pour chaque valeur d'epsilon
+    epsilon_colors = {
+        0.1: "blue",
+        1.0: "green",
+        10.0: "red"
+    }
+    
+    # Pour chaque valeur d'epsilon
+    for epsilon, agent_gaps in optimality_gap_by_agent_by_epsilon.items():
+        color = epsilon_colors.get(epsilon, "gray")
+        
+        # Pour chaque agent
+        for agent_id, gap_history in enumerate(agent_gaps):
+            # Afficher l'étiquette seulement pour le premier agent de chaque epsilon
+            if agent_id == 0:
+                plt.loglog(iterations, gap_history, color=color, 
+                         label=f"ε = {epsilon}", alpha=0.7)
+            else:
+                plt.loglog(iterations, gap_history, color=color, alpha=0.7)
+    
+    plt.xlabel("Number of iterations")
+    plt.ylabel(r"Optimality gap $\|\alpha_i - \alpha^*\|$")
+    plt.title(f"Convergence by agent for {algorithm_name} with different privacy levels")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"results/convergence/convergence_by_agent_{algorithm_name}_multi_epsilon.pdf")
+    plt.show()
+
 # --- Algorithmes de la partie 1 ---
 def decentralized_gradient_descent(
     agents_data_indices,
@@ -497,92 +536,66 @@ def admm(
     alpha_star_centralized,
     verbose=False):
     """Implémentation de l'ADMM."""
-    
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
+    # Initialisation des variables primales
     agent_alphas = [np.zeros(m) for _ in range(num_agents)]
     
+    # Initialisation des variables auxiliaires duales et y pour chaque lien (on ignore les self-loops)
     y = {}
     lambdas = {}
-    for agent in range(num_agents):
-        for neighbor in list(communication_graph.neighbors(agent)):
-            if neighbor == agent:
+    for i in range(num_agents):
+        for j in list(communication_graph.neighbors(i)):
+            if i == j:
                 continue
-            if neighbor < agent:
-                y[(agent, neighbor)] = np.zeros(m)
-                lambdas[(agent, neighbor)] = np.zeros(m)
-            if neighbor > agent:
-                y[(neighbor, agent)] = np.zeros(m)
-                lambdas[(neighbor, agent)] = np.zeros(m)
+            y[(i, j)] = np.zeros(m)
+            lambdas[(i, j)] = np.zeros(m)
     
+    # Calculer la matrice de kernel pour chaque agent
     agents_Knm = [kernel_matrix(agents_x_data[i], X_m_points) for i in range(num_agents)]
     
-    agents_H = []
-    agents_b = []
-    for agent_id in range(num_agents):
-        Knm_agent = agents_Knm[agent_id]
-        y_agent = agents_y_data[agent_id]
-        
-        # Calcul de H_i
-        H_agent = (sigma**2 / num_agents) * Kmm + Knm_agent.T @ Knm_agent + (nu / num_agents) * np.eye(m)
-        agents_H.append(H_agent)
-        agents_b.append(Knm_agent.T @ y_agent)
-    
     optimality_gap_history_admm = []
-    # Suivi de l'optimality gap par agent
     optimality_gap_by_agent_admm = [[] for _ in range(num_agents)]
     
     for iteration in range(num_iterations):
+        new_agent_alphas = [np.zeros(m) for _ in range(num_agents)]
+        # Mise à jour des variables primales pour chaque agent
         for agent in range(num_agents):
-            
-            neighbors = communication_graph.neighbors(agent)
-            d_agent = sum(1 for neighbor in neighbors if neighbor != agent)
-            
-            dual_term = np.zeros(m)
-            for neighbor in neighbors:
+            Knm_agent = agents_Knm[agent]
+            y_agent = agents_y_data[agent]
+            # Nombre de voisins (hors self-loop)
+            d_agent = sum(1 for neighbor in communication_graph.neighbors(agent) if neighbor != agent)
+            # Construction de la matrice A_i avec renforcement via beta*d_agent
+            A = (sigma**2 / num_agents) * Kmm + (Knm_agent.T @ Knm_agent) + (nu / num_agents + beta*d_agent) * np.eye(m)
+            # Construction du vecteur b_i
+            b = Knm_agent.T @ y_agent
+            for neighbor in list(communication_graph.neighbors(agent)):
                 if neighbor == agent:
                     continue
-                key = tuple(sorted((agent, neighbor)))
-                
-                if agent < neighbor:
-                    dual_term += beta * y[key] - lambdas[key]
-                else:
-                    dual_term += beta * y[key] + lambdas[key]
-
-            agent_alphas[agent] = np.linalg.solve(agents_H[agent] + beta * d_agent * np.eye(m), agents_b[agent] + dual_term)
-
-            # Tracking du gap local
-            optimality_gap_agent = np.linalg.norm(agent_alphas[agent] - alpha_star_centralized)
-            optimality_gap_by_agent_admm[agent].append(optimality_gap_agent)
+                b += beta * y[(agent, neighbor)] - lambdas[(agent, neighbor)]
+            new_agent_alphas[agent] = np.linalg.solve(A, b)
+            optimality_gap_by_agent_admm[agent].append(np.linalg.norm(new_agent_alphas[agent] - alpha_star_centralized))
+            if verbose:
+                print(f"ADMM - Agent {agent}, Iteration {iteration}/{num_iterations}, alpha: {new_agent_alphas[agent]}")
         
-        # Mise à jour de y et lambda
-        for agent in range(num_agents):
-            for neighbor in list(communication_graph.neighbors(agent)):
-                if neighbor == agent:
-                    continue
-                if neighbor < agent:
-                    y[(agent, neighbor)] = 0.5 * (agent_alphas[agent] + agent_alphas[neighbor])
-                    
-                if neighbor > agent:
-                    y[(neighbor, agent)] = 0.5 * (agent_alphas[agent] + agent_alphas[neighbor])
-
-        for agent in range(num_agents):
-            for neighbor in list(communication_graph.neighbors(agent)):
-                if neighbor == agent:
-                    continue
-                if neighbor < agent:
-                    lambdas[(agent, neighbor)] += beta * (agent_alphas[agent] - y[(agent, neighbor)])
-                if neighbor > agent:
-                    lambdas[(neighbor, agent)] += beta * (agent_alphas[neighbor] - y[(neighbor, agent)])
-
-        # Optimality gap global
+        # Mise à jour symétrique des variables y et lambda pour chaque lien (self-loops ignorées)
+        for (i, j) in communication_graph.edges():
+            if i == j:
+                continue
+            y_update = (new_agent_alphas[i] + new_agent_alphas[j]) / 2
+            y[(i, j)] = y_update
+            y[(j, i)] = y_update
+            lambdas[(i, j)] = lambdas[(i, j)] + beta * (new_agent_alphas[i] - y_update)
+            lambdas[(j, i)] = lambdas[(j, i)] + beta * (new_agent_alphas[j] - y_update)
+        
+        agent_alphas = new_agent_alphas
         avg_alpha = np.mean(agent_alphas, axis=0)
         optimality_gap = np.linalg.norm(avg_alpha - alpha_star_centralized)
         optimality_gap_history_admm.append(optimality_gap)
         
         if verbose:
             print(f"ADMM - Iteration {iteration}/{num_iterations}, Optimality Gap: {optimality_gap:.6f}")
-        
+            
     return agent_alphas, optimality_gap_history_admm, optimality_gap_by_agent_admm
 
 # --- Algorithme de la partie 2 ---
@@ -697,41 +710,59 @@ def dgd_dp(
     step_size,
     num_iterations,
     alpha_star_centralized,
-    noise_std):
-    """Implémentation de DGD avec Privacité Différentielle (DGD-DP)."""
+    epsilon,
+    verbose=False):
+    """Implémentation de la Descente de Gradient Décentralisée avec bruit laplacien (DGD-DP)."""
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
     agent_alphas = [np.zeros(m) for _ in range(num_agents)]
     agents_Knm = []
     for agent_x in agents_x_data:
         agents_Knm.append(kernel_matrix(agent_x, X_m_points))
+    
+    W = np.zeros((num_agents, num_agents))
+    for i in range(num_agents):
+        neighbors = list(communication_graph.neighbors(i))
+        for j in neighbors:
+            W[i, j] = communication_graph.get_edge_data(i, j)['weight']
 
     optimality_gap_history_dgd_dp = []
+    # Suivi de l'optimality gap par agent
+    optimality_gap_by_agent_dgd_dp = [[] for _ in range(num_agents)]
 
-    for _ in range(num_iterations):
+    for iteration in range(num_iterations):
+        gamma_k = 1 / (1 + 0.001 * (iteration ** 0.9))  # Facteur d'atténuation
+        alpha_k = 0.002 / (1 + 0.001 * iteration)  # Learning rate décroissant
+        nu_k = (0.01/epsilon) * (1/(1+0.001*iteration**0.1)) # Variance du bruit laplacien
+        
+        new_agent_alphas = [np.zeros(m) for _ in range(num_agents)]
+        
         for agent_id in range(num_agents):
             Knm_agent = agents_Knm[agent_id]
             y_agent = agents_y_data[agent_id]
             alpha_agent = agent_alphas[agent_id]
 
             grad_local = (sigma**2 / num_agents) * Kmm @ alpha_agent - (Knm_agent.T @ (y_agent - Knm_agent @ alpha_agent)) + (nu / num_agents) * alpha_agent
-
-            noise = np.random.normal(0, noise_std, size=grad_local.shape)
-            grad_local_noisy = grad_local + noise
-
+            noise = np.random.laplace(0, nu_k, size=grad_local.shape) 
+            
             alpha_avg = np.zeros(m)
-            neighbors = list(communication_graph.neighbors(agent_id)) + [agent_id]
+            neighbors = list(communication_graph.neighbors(agent_id))
             for neighbor_id in neighbors:
-                alpha_avg += agent_alphas[neighbor_id]
-            alpha_avg /= len(neighbors)
-
-            agent_alphas[agent_id] = alpha_avg - step_size * grad_local_noisy
-
+                alpha_avg += gamma_k * W[agent_id, neighbor_id] * ((agent_alphas[neighbor_id] + noise) - alpha_agent)
+            new_agent_alphas[agent_id] = alpha_agent + alpha_avg - alpha_k * grad_local
+            
+            # Calculer et enregistrer l'optimality gap pour chaque agent
+            optimality_gap_agent = np.linalg.norm(alpha_agent - alpha_star_centralized)
+            optimality_gap_by_agent_dgd_dp[agent_id].append(optimality_gap_agent)
+            
+        agent_alphas = new_agent_alphas
         avg_alpha = np.mean(agent_alphas, axis=0)
         optimality_gap = np.linalg.norm(avg_alpha - alpha_star_centralized)
         optimality_gap_history_dgd_dp.append(optimality_gap)
+        if verbose:
+            print(f"DGD-DP - Iteration {iteration+1}/{num_iterations}, Optimality Gap: {optimality_gap:.6f}")
 
-    return agent_alphas, optimality_gap_history_dgd_dp
+    return agent_alphas, optimality_gap_history_dgd_dp, optimality_gap_by_agent_dgd_dp
 
 # --- Partie principale du script ---
 if __name__ == "__main__":
@@ -843,7 +874,7 @@ if __name__ == "__main__":
         avg_alpha_dd = np.mean(agent_alphas_dd, axis=0)
 
         print("--- 1.4 ADMM ---")
-        beta_admm = 0.01
+        beta_admm = 1.0
         agent_alphas_admm, optimality_gap_history_admm, optimality_gap_by_agent_admm = admm(
             agents_data_indices,
             agents_x_data,
@@ -964,16 +995,38 @@ if __name__ == "__main__":
     communication_graph_dp = communication_graph.copy() # Réutiliser le graphe de DGD
     step_size_dgd_dp = 0.01
     num_iterations_dgd_dp = 1000
-    noise_std_dp = 0.1 # Écart-type du bruit gaussien - à calibrer pour epsilon
-
-    agent_alphas_dgd_dp, optimality_gap_history_dgd_dp = dgd_dp(
-        agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph_dp,
-        step_size_dgd_dp, num_iterations_dgd_dp, alpha_star_centralized, noise_std_dp
-    )
-
-    iterations_dgd_dp = range(num_iterations_dgd_dp)
-    plot_convergence(iterations_dgd_dp, optimality_gap_history_dgd_dp, "DGD_DP")
-    avg_alpha_dgd_dp = np.mean(agent_alphas_dgd_dp, axis=0)
-    visualize_function(x_prime_grid, avg_alpha_dgd_dp, X_m_points, "DGD_DP",  y_nystrom, (x_data[:n_total], y_data[:n_total]))
+    
+    # Stocker les optimality gaps pour chaque agent par valeur d'epsilon
+    optimality_gap_by_agent_by_epsilon = {}
+    dgd_dp_results = {}
+    
+    # Essayer avec différentes valeurs d'epsilon pour montrer l'impact sur la vie privée
+    epsilons = [0.1, 1.0, 10.0]
+    
+    for eps in epsilons:
+        print(f"Running DGD-DP with ε = {eps}")
+        agent_alphas, optimality_gap_history, optimality_gap_by_agent = dgd_dp(
+            agents_data_indices, agents_x_data, agents_y_data, X_m_points, Kmm, communication_graph_dp,
+            step_size_dgd_dp, num_iterations_dgd_dp, alpha_star_centralized, eps, False
+        )
+        
+        dgd_dp_results[f"ε = {eps}"] = optimality_gap_history
+        optimality_gap_by_agent_by_epsilon[eps] = optimality_gap_by_agent
+        
+        # Si c'est la valeur d'epsilon médiane, on affiche la convergence par agent
+        if eps == 1.0:
+            iterations_dgd_dp = range(num_iterations_dgd_dp)
+            plot_convergence(iterations_dgd_dp, optimality_gap_history, f"DGD_DP_eps_{eps}")
+            plot_convergence_by_agent(iterations_dgd_dp, optimality_gap_by_agent, f"DGD_DP_eps_{eps}", 
+                                    communication_graph_dp, step_size_dgd_dp)
+            avg_alpha_dgd_dp = np.mean(agent_alphas, axis=0)
+            visualize_function(x_prime_grid, avg_alpha_dgd_dp, X_m_points, f"DGD_DP_eps_{eps}", 
+                             y_nystrom, (x_data[:n_total], y_data[:n_total]))
+    
+    # Afficher la comparaison des courbes de convergence pour différents epsilons
+    plot_convergence_multi(range(num_iterations_dgd_dp), dgd_dp_results)
+    
+    # Afficher la comparaison des courbes de convergence par agent pour différents epsilons
+    plot_convergence_by_epsilon(range(num_iterations_dgd_dp), optimality_gap_by_agent_by_epsilon, "DGD_DP")
 
     print("--- Programme terminé ---")
