@@ -1,8 +1,8 @@
 import math as m
 import numpy as np
 import matplotlib.pyplot as plt
-import pickle
 import networkx as nx
+import pickle
 from centralized_solution import solve
 
 # --- Paramètres Globaux ---
@@ -287,9 +287,8 @@ def decentralized_gradient_descent(
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
     agent_alphas = [np.zeros(m) for _ in range(num_agents)]
-    agents_Knm = []
-    for agent_x in agents_x_data:
-        agents_Knm.append(kernel_matrix(agent_x, X_m_points))
+    
+    agents_Knm = [kernel_matrix(agents_x_data[i], X_m_points) for i in range(num_agents)]
     
     W = np.zeros((num_agents, num_agents))
     for i in range(num_agents):
@@ -321,9 +320,12 @@ def decentralized_gradient_descent(
             optimality_gap_by_agent_dgd[agent_id].append(optimality_gap_agent)
             
         agent_alphas = new_agent_alphas
+        
         avg_alpha = np.mean(agent_alphas, axis=0)
+        
         optimality_gap = np.linalg.norm(avg_alpha - alpha_star_centralized)
         optimality_gap_history_dgd.append(optimality_gap)
+        
         if verbose:
             print(f"DGD - Iteration {iteration+1}/{num_iterations}, Optimality Gap: {optimality_gap:.6f}")
 
@@ -344,9 +346,8 @@ def gradient_tracking(
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
     agent_alphas = [np.zeros(m) for _ in range(num_agents)]
-    agents_Knm = []
-    for agent_x in agents_x_data:
-        agents_Knm.append(kernel_matrix(agent_x, X_m_points))
+    
+    agents_Knm = [kernel_matrix(agents_x_data[i], X_m_points) for i in range(num_agents)]
     
     W = np.zeros((num_agents, num_agents))
     for i in range(num_agents):
@@ -395,9 +396,12 @@ def gradient_tracking(
 
         agent_alphas = new_agent_alphas
         agent_gradients = new_agent_gradients
+        
         avg_alpha = np.mean(agent_alphas, axis=0)
+        
         optimality_gap = np.linalg.norm(avg_alpha - alpha_star_centralized)
         optimality_gap_history_dgt.append(optimality_gap)
+        
         if verbose:
             print(f"DGT - Iteration {iteration+1}/{num_iterations}, Optimality Gap: {optimality_gap:.6f}")
 
@@ -427,24 +431,18 @@ def dual_decomposition(
             if j > i:
                 lambdas[(j,i)] = np.zeros(m)
     
-    agents_Knm = []
-    for agent_x in agents_x_data:
-        agents_Knm.append(kernel_matrix(agent_x, X_m_points))
+    agents_Knm = [kernel_matrix(agents_x_data[i], X_m_points) for i in range(num_agents)]
     
     agents_H = []
     agents_b = []
     for agent_id in range(num_agents):
-        Knm = agents_Knm[agent_id]
+        Knm_agent = agents_Knm[agent_id]
         y_agent = agents_y_data[agent_id]
         
         # Calcul de H_i
-        H_i = (sigma**2 / num_agents) * Kmm + (nu / num_agents) * np.eye(m)
-        for i in range(len(y_agent)):
-            K_im = Knm[i, :].reshape(-1, 1)
-            H_i += K_im @ K_im.T
-        
-        agents_H.append(H_i)
-        agents_b.append(Knm.T @ y_agent)
+        H_agent = (sigma**2 / num_agents) * Kmm + Knm_agent.T @ Knm_agent + (nu / num_agents) * np.eye(m)
+        agents_H.append(H_agent)
+        agents_b.append(Knm_agent.T @ y_agent)
     
     optimality_gap_history_dd = []
     # Suivi de l'optimality gap par agent
@@ -485,7 +483,7 @@ def dual_decomposition(
         if verbose:
             print(f"DD - Iteration {iteration}/{num_iterations}, Optimality Gap: {optimality_gap:.6f}")
     
-    return agent_alphas, optimality_gap_history_dd, optimality_gap_by_agent_dd, avg_alpha
+    return agent_alphas, optimality_gap_history_dd, optimality_gap_by_agent_dd
 
 def admm(
     agents_data_indices,
@@ -493,66 +491,99 @@ def admm(
     agents_y_data,
     X_m_points,
     Kmm,
-    rho,
+    communication_graph,
+    beta,
     num_iterations,
-    alpha_star_centralized):
+    alpha_star_centralized,
+    verbose=False):
     """Implémentation de l'ADMM."""
-    import itertools
+    
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
+    agent_alphas = [np.zeros(m) for _ in range(num_agents)]
     
-    alpha = [np.zeros(m) for _ in range(num_agents)]
     y = {}
     lambdas = {}
-    for (i, j) in itertools.combinations(range(num_agents), 2):
-        y[(i, j)] = np.zeros(m)
-        lambdas[(i, j)] = np.zeros(m)
+    for agent in range(num_agents):
+        for neighbor in list(communication_graph.neighbors(agent)):
+            if neighbor == agent:
+                continue
+            if neighbor < agent:
+                y[(agent, neighbor)] = np.zeros(m)
+                lambdas[(agent, neighbor)] = np.zeros(m)
+            if neighbor > agent:
+                y[(neighbor, agent)] = np.zeros(m)
+                lambdas[(neighbor, agent)] = np.zeros(m)
     
     agents_Knm = [kernel_matrix(agents_x_data[i], X_m_points) for i in range(num_agents)]
     
-    def local_objective_grad(i, alpha_i):
-        Knm_i = agents_Knm[i]
-        y_i = agents_y_data[i]
-        grad_local = (sigma**2 / num_agents) * Kmm @ alpha_i \
-                     - (Knm_i.T @ (y_i - Knm_i @ alpha_i)) \
-                     + (nu / num_agents) * alpha_i
-        return grad_local
+    agents_H = []
+    agents_b = []
+    for agent_id in range(num_agents):
+        Knm_agent = agents_Knm[agent_id]
+        y_agent = agents_y_data[agent_id]
+        
+        # Calcul de H_i
+        H_agent = (sigma**2 / num_agents) * Kmm + Knm_agent.T @ Knm_agent + (nu / num_agents) * np.eye(m)
+        agents_H.append(H_agent)
+        agents_b.append(Knm_agent.T @ y_agent)
     
     optimality_gap_history_admm = []
     # Suivi de l'optimality gap par agent
     optimality_gap_by_agent_admm = [[] for _ in range(num_agents)]
     
-    for _ in range(num_iterations):
-        for i in range(num_agents):
-            penalty_sum = np.zeros(m)
-            neighbors_count = 0
-            for j in range(num_agents):
-                if j == i: 
+    for iteration in range(num_iterations):
+        for agent in range(num_agents):
+            
+            neighbors = communication_graph.neighbors(agent)
+            d_agent = sum(1 for neighbor in neighbors if neighbor != agent)
+            
+            dual_term = np.zeros(m)
+            for neighbor in neighbors:
+                if neighbor == agent:
                     continue
-                if i < j:
-                    penalty_sum += (alpha[i] - y[(i, j)] + lambdas[(i, j)] / rho)
+                key = tuple(sorted((agent, neighbor)))
+                
+                if agent < neighbor:
+                    dual_term += beta * y[key] - lambdas[key]
                 else:
-                    penalty_sum += (alpha[i] - y[(j, i)] - lambdas[(j, i)] / rho)
-                neighbors_count += 1
-            
-            grad_i = local_objective_grad(i, alpha[i]) + rho * penalty_sum
-            alpha[i] -= 0.01 * grad_i
-            
-            # Calculer et enregistrer l'optimality gap pour chaque agent
-            optimality_gap_agent = np.linalg.norm(alpha[i] - alpha_star_centralized)
-            optimality_gap_by_agent_admm[i].append(optimality_gap_agent)
+                    dual_term += beta * y[key] + lambdas[key]
 
-        for (i, j) in y.keys():
-            y[(i, j)] = 0.5 * (alpha[i] + alpha[j])
+            agent_alphas[agent] = np.linalg.solve(agents_H[agent] + beta * d_agent * np.eye(m), agents_b[agent] + dual_term)
 
-        for (i, j) in lambdas.keys():
-            lambdas[(i, j)] += rho * (alpha[i] - y[(i, j)])
+            # Tracking du gap local
+            optimality_gap_agent = np.linalg.norm(agent_alphas[agent] - alpha_star_centralized)
+            optimality_gap_by_agent_admm[agent].append(optimality_gap_agent)
+        
+        # Mise à jour de y et lambda
+        for agent in range(num_agents):
+            for neighbor in list(communication_graph.neighbors(agent)):
+                if neighbor == agent:
+                    continue
+                if neighbor < agent:
+                    y[(agent, neighbor)] = 0.5 * (agent_alphas[agent] + agent_alphas[neighbor])
+                    
+                if neighbor > agent:
+                    y[(neighbor, agent)] = 0.5 * (agent_alphas[agent] + agent_alphas[neighbor])
 
-        avg_alpha = np.mean(alpha, axis=0)
-        gap = np.linalg.norm(avg_alpha - alpha_star_centralized)
-        optimality_gap_history_admm.append(gap)
-    
-    return alpha, optimality_gap_history_admm, optimality_gap_by_agent_admm, np.mean(alpha, axis=0)
+        for agent in range(num_agents):
+            for neighbor in list(communication_graph.neighbors(agent)):
+                if neighbor == agent:
+                    continue
+                if neighbor < agent:
+                    lambdas[(agent, neighbor)] += beta * (agent_alphas[agent] - y[(agent, neighbor)])
+                if neighbor > agent:
+                    lambdas[(neighbor, agent)] += beta * (agent_alphas[neighbor] - y[(neighbor, agent)])
+
+        # Optimality gap global
+        avg_alpha = np.mean(agent_alphas, axis=0)
+        optimality_gap = np.linalg.norm(avg_alpha - alpha_star_centralized)
+        optimality_gap_history_admm.append(optimality_gap)
+        
+        if verbose:
+            print(f"ADMM - Iteration {iteration}/{num_iterations}, Optimality Gap: {optimality_gap:.6f}")
+        
+    return agent_alphas, optimality_gap_history_admm, optimality_gap_by_agent_admm
 
 # --- Algorithme de la partie 2 ---
 def federated_averaging(
@@ -770,7 +801,7 @@ if __name__ == "__main__":
         )
         iterations_dgd = range(num_iterations)
         # Afficher la convergence par agent pour DGD
-        plot_convergence_by_agent(iterations_dgd, optimality_gap_by_agent_dgd, "DGD", graph, step_size_dgd)
+        #plot_convergence_by_agent(iterations_dgd, optimality_gap_by_agent_dgd, "DGD", graph, step_size_dgd)
         avg_alpha_dgd = np.mean(agent_alphas_dgd, axis=0)
 
         print("--- 1.2 Gradient Tracking (GT) ---")
@@ -789,12 +820,12 @@ if __name__ == "__main__":
         )
         iterations_gt = range(num_iterations)
         # Afficher la convergence par agent pour GT
-        plot_convergence_by_agent(iterations_gt, optimality_gap_by_agent_gt, "GradientTracking", graph, step_size_gt)
+        #plot_convergence_by_agent(iterations_gt, optimality_gap_by_agent_gt, "GradientTracking", graph, step_size_gt)
         avg_alpha_gt = np.mean(agent_alphas_gt, axis=0)
 
         print("--- 1.3 Dual Decomposition (DD) ---")
         step_size_dd = 0.1
-        agent_alphas_dd, optimality_gap_history_dd, optimality_gap_by_agent_dd, z_global_dd = dual_decomposition(
+        agent_alphas_dd, optimality_gap_history_dd, optimality_gap_by_agent_dd = dual_decomposition(
             agents_data_indices,
             agents_x_data,
             agents_y_data,
@@ -808,23 +839,27 @@ if __name__ == "__main__":
         )
         iterations_dd = range(num_iterations)
         # Afficher la convergence par agent pour DD
-        plot_convergence_by_agent(iterations_dd, optimality_gap_by_agent_dd, "DualDecomposition", graph, step_size_dd)
+        #plot_convergence_by_agent(iterations_dd, optimality_gap_by_agent_dd, "DualDecomposition", graph, step_size_dd)
+        avg_alpha_dd = np.mean(agent_alphas_dd, axis=0)
 
         print("--- 1.4 ADMM ---")
-        rho_admm = 1.0
-        agent_alphas_admm, optimality_gap_history_admm, optimality_gap_by_agent_admm, z_global_admm = admm(
+        beta_admm = 0.01
+        agent_alphas_admm, optimality_gap_history_admm, optimality_gap_by_agent_admm = admm(
             agents_data_indices,
             agents_x_data,
             agents_y_data,
             X_m_points,
             Kmm,
-            rho_admm,
+            graph,
+            beta_admm,
             num_iterations,
-            alpha_star_centralized
+            alpha_star_centralized,
+            verbose=False
         )
         iterations_admm = range(len(optimality_gap_history_admm))
         # Afficher la convergence par agent pour ADMM
-        plot_convergence_by_agent(iterations_admm, optimality_gap_by_agent_admm, "ADMM", graph, rho_admm)
+        plot_convergence_by_agent(iterations_admm, optimality_gap_by_agent_admm, "ADMM", graph, beta_admm)
+        avg_alpha_admm = np.mean(agent_alphas_admm, axis=0)
         
         # Afficher la comparaison des courbes de convergence par agent pour toutes les méthodes
         min_length = min(
@@ -865,20 +900,10 @@ if __name__ == "__main__":
             "Centralized": alpha_star_centralized,
             "DGD": avg_alpha_dgd,
             "GradientTracking": avg_alpha_gt,
-            "DualDecomposition": z_global_dd,
-            "ADMM": z_global_admm
+            "DualDecomposition": avg_alpha_dd,
+            "ADMM": avg_alpha_admm
         }
         plot_reconstruction_multi(x_prime_grid, methods_alpha, X_m_points, y_nystrom, (x_data[:n_total], y_data[:n_total]))
-        
-        # Ajout de la visualisation par agent
-        methods_agents_alpha = {
-            "Centralized": alpha_star_centralized,
-            "DGD": agent_alphas_dgd,
-            "GradientTracking": agent_alphas_gt,
-            "DualDecomposition": agent_alphas_dd,
-            "ADMM": agent_alphas_admm
-        }
-    
     
     print("--- 2. Federated Averaging (FedAvg) ---")
     data_part2 = load_data('data/second_database.pkl')
