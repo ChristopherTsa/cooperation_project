@@ -711,7 +711,7 @@ def dgd_dp(
     num_iterations,
     alpha_star_centralized,
     epsilon,
-    verbose=False):
+    verbose):
     """Implémentation de la Descente de Gradient Décentralisée avec bruit laplacien (DGD-DP)."""
     num_agents = len(agents_data_indices)
     m = len(X_m_points)
@@ -760,7 +760,7 @@ def dgd_dp(
         optimality_gap = np.linalg.norm(avg_alpha - alpha_star_centralized)
         optimality_gap_history_dgd_dp.append(optimality_gap)
         if verbose:
-            print(f"DGD-DP - Iteration {iteration+1}/{num_iterations}, Optimality Gap: {optimality_gap:.6f}")
+            print(f"DGD - Iteration {iteration+1}/{num_iterations}, Optimality Gap: {optimality_gap:.6f}")
 
     return agent_alphas, optimality_gap_history_dgd_dp, optimality_gap_by_agent_dgd_dp
 
